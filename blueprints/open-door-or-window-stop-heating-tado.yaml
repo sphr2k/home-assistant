@@ -21,7 +21,7 @@ blueprint:
     minimum_open_time:
       name: Minimum time to wait before turning off climate
       description: Time in seconds to wait after the window is opened.
-      default: 12
+      default: 30
       selector:
         number:
           min: 0.0
@@ -48,10 +48,18 @@ action:
           - condition: trigger
             id: "window_opened"
         sequence:
-          - delay: !input 'minimum_open_time'
+          # Wait for the minimum time OR for the window to close
+          - wait_for_trigger:
+              - platform: state
+                entity_id: !input 'door_window_entity'
+                to: 'off'  # Window closed
+            timeout: !input 'minimum_open_time'
+            continue_on_timeout: true
+          # Check if the window is still open after the wait
           - condition: state
             entity_id: !input 'door_window_entity'
-            state: 'on'  # Recheck if the window is still open
+            state: 'on'
+          # Turn off the climate device if the window is still open
           - service: climate.turn_off
             entity_id: !input 'climate_target'
 
@@ -60,6 +68,7 @@ action:
           - condition: trigger
             id: "window_closed"
         sequence:
+          # Turn the climate device back on immediately
           - service: climate.turn_on
             entity_id: !input 'climate_target'
           # Optional: Restore to "auto" mode for Tado users
