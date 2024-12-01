@@ -1,22 +1,26 @@
 blueprint:
-  name: Door/Window open, climate off after a defined time
-  description: An automation that turns off a running your climate device for exmple a heater
-    or an air conditioning if a window sensor is open for a specific time. It waits
-    until the window is closed again in order to turn the climate entity on again.
+  name: Door/Window open-close, climate control
+  description: Turns off the climate device when a door/window is open and turns it back on when closed.
   domain: automation
   input:
     door_window_entity:
       name: Door/Window Sensor
-      description: The window sensor that controls the climate entity.
+      description: The window or door sensor controlling the climate device.
       selector:
         entity:
           domain: binary_sensor
           device_class: 
           - window
           - door
+    climate_target:
+      name: Climate Device
+      description: The climate entity to control.
+      selector:
+        entity:
+          domain: climate
     minimum_open_time:
-      name: Miniumum time the door/window is open
-      description: Time in seconds to wait until the automation is triggered
+      name: Minimum time to wait before turning off climate
+      description: Time in seconds to wait after the window is opened.
       default: 12
       selector:
         number:
@@ -25,36 +29,42 @@ blueprint:
           unit_of_measurement: seconds
           mode: slider
           step: 1.0
-    climate_target:
-      name: Climate Device
-      description: The climate entity that is controlled by the door/window sensor.
-      selector:
-        entity:
-          domain: climate
 trigger:
-- platform: state
-  entity_id: !input 'door_window_entity'
-  to: 'on'
-  for: !input 'minimum_open_time'
-condition:
-- condition: not
-  conditions:
-    - condition: state
-      entity_id: !input 'climate_target'
-      state: 'off'
-action:
-- service: climate.turn_off
-  entity_id: !input 'climate_target'
-- wait_for_trigger:
-  - platform: state
+  - id: "window_opened"
+    platform: state
     entity_id: !input 'door_window_entity'
+    from: 'off'
+    to: 'on'
+
+  - id: "window_closed"
+    platform: state
+    entity_id: !input 'door_window_entity'
+    from: 'on'
     to: 'off'
-  continue_on_timeout: false
-- service: climate.turn_on
-  entity_id: !input 'climate_target'
-# Only for Tado Users who want to use the Tado Heatplan "auto"
-- service: climate.set_hvac_mode
-  target:
-    entity_id: !input 'climate_target'
-  data:
-    hvac_mode: auto
+action:
+  - choose:
+      # If the window was opened
+      - conditions:
+          - condition: trigger
+            id: "window_opened"
+        sequence:
+          - delay: !input 'minimum_open_time'
+          - condition: state
+            entity_id: !input 'door_window_entity'
+            state: 'on'  # Recheck if the window is still open
+          - service: climate.turn_off
+            entity_id: !input 'climate_target'
+
+      # If the window was closed
+      - conditions:
+          - condition: trigger
+            id: "window_closed"
+        sequence:
+          - service: climate.turn_on
+            entity_id: !input 'climate_target'
+          # Optional: Restore to "auto" mode for Tado users
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input 'climate_target'
+            data:
+              hvac_mode: auto
