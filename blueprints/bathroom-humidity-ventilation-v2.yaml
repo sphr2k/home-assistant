@@ -1,0 +1,306 @@
+blueprint:
+  name: Bathroom Humidity Ventilation v2
+  description: >
+    Data-driven ventilation advice with volume control, debug logging,
+    and nag limits, based on absolute humidity and temperature.
+  domain: automation
+
+  input:
+    house_mode_sensor:
+      name: House master mode sensor
+      default: sensor.house_master_mode
+      selector:
+        entity:
+          domain: sensor
+
+    sensor_abs_inside:
+      name: Bathroom absolute humidity
+      default: sensor.bad_absolute_humidity
+      selector:
+        entity:
+          domain: sensor
+
+    sensor_rh_inside:
+      name: Bathroom relative humidity
+      default: sensor.bad_klimasensor_humidity
+      selector:
+        entity:
+          domain: sensor
+
+    sensor_abs_outside:
+      name: Outside absolute humidity
+      default: sensor.balkon_absolute_humidity
+      selector:
+        entity:
+          domain: sensor
+
+    sensor_temp_inside:
+      name: Bathroom temperature
+      default: sensor.bad_klimasensor_temperature
+      selector:
+        entity:
+          domain: sensor
+
+    window_contact:
+      name: Bathroom window contact
+      default: binary_sensor.bad_fenster_contact
+      selector:
+        entity:
+          domain: binary_sensor
+
+    media_player:
+      name: Media player for TTS
+      default: media_player.hub
+      selector:
+        entity:
+          domain: media_player
+
+    thresh_rh_open:
+      name: RH open threshold (%)
+      default: 77
+      selector:
+        number:
+          min: 40
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    thresh_abs_open:
+      name: Absolute humidity open threshold (g/m³)
+      default: 11.5
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    thresh_rh_close:
+      name: RH close threshold (%)
+      default: 68
+      selector:
+        number:
+          min: 30
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    thresh_abs_close:
+      name: Absolute humidity close threshold (g/m³)
+      default: 10.8
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.1
+
+    min_delta:
+      name: Minimum absolute humidity delta (g/m³)
+      default: 1.5
+      selector:
+        number:
+          min: 0.1
+          max: 10
+          step: 0.1
+
+    min_temp:
+      name: Minimum safe temperature (°C)
+      default: 16.5
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+
+    min_open_time:
+      name: Minimum open time before close hint (min)
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+
+    debug_mode:
+      name: Enable debug log entries
+      default: true
+      selector:
+        boolean: {}
+
+triggers:
+  - trigger: state
+    entity_id:
+      - !input sensor_abs_inside
+      - !input sensor_rh_inside
+      - !input sensor_abs_outside
+      - !input sensor_temp_inside
+
+conditions:
+  - condition: state
+    entity_id: !input house_mode_sensor
+    state:
+      - Morning
+      - Day
+      - Evening
+
+actions:
+  - variables:
+      debug_mode: !input debug_mode
+
+      abs_inside_entity: !input sensor_abs_inside
+      abs_outside_entity: !input sensor_abs_outside
+      rh_inside_entity: !input sensor_rh_inside
+      temp_inside_entity: !input sensor_temp_inside
+      window_entity: !input window_contact
+      media_player_entity: !input media_player
+
+      abs_inside: "{{ states(abs_inside_entity) | float(0) }}"
+      abs_outside: "{{ states(abs_outside_entity) | float(0) }}"
+      rh_inside: "{{ states(rh_inside_entity) | float(0) }}"
+      temp_inside: "{{ states(temp_inside_entity) | float(0) }}"
+      window_state: "{{ states(window_entity) }}"
+      window_last_changed: "{{ states[window_entity].last_changed }}"
+
+      time_open_mins: >-
+        {% if window_last_changed %}
+          {{ ((as_timestamp(now()) - as_timestamp(window_last_changed)) / 60)
+             | round(1) | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+
+      mins_since_last_run: >-
+        {{ (as_timestamp(now())
+            - as_timestamp(this.attributes.last_triggered
+                           | default('2000-01-01', true)))
+           / 60 | float(0) }}
+
+      thresh_rh_open: !input thresh_rh_open
+      thresh_abs_open: !input thresh_abs_open
+      thresh_rh_close: !input thresh_rh_close
+      thresh_abs_close: !input thresh_abs_close
+      min_delta: !input min_delta
+      min_temp: !input min_temp
+      min_open_time: !input min_open_time
+
+      delta: "{{ (abs_inside - abs_outside) | round(2) }}"
+
+      sensors_ok: >-
+        {{
+          states(abs_inside_entity) not in ['unknown','unavailable']
+          and states(abs_outside_entity) not in ['unknown','unavailable']
+          and states(rh_inside_entity) not in ['unknown','unavailable']
+          and states(temp_inside_entity) not in ['unknown','unavailable']
+        }}
+
+      is_shower_zone: "{{ rh_inside > thresh_rh_open or abs_inside > thresh_abs_open }}"
+      is_physics_good: "{{ (abs_inside - abs_outside) >= min_delta }}"
+      is_temp_safe: "{{ temp_inside > min_temp }}"
+
+      media_player: "{{ media_player_entity }}"
+      default_volume: 0.7
+      current_volume: "{{ state_attr(media_player_entity, 'volume_level') | float(default_volume) }}"
+      tts_volume: 0.9
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ debug_mode }}"
+        sequence:
+          - action: logbook.log
+            data:
+              name: Bad Lüftung DEBUG
+              entity_id: "{{ this.entity_id }}"
+              message: >
+                [Decision Tree] Last Run: {{ mins_since_last_run | round(1) }}m
+                ago. In: {{ abs_inside }}g ({{ rh_inside }}%) | Out: {{
+                abs_outside }}g Window: {{ window_state }} ({{ time_open_mins }}m)
+
+                [Open Checks] 1. Sensors OK? -> {{ sensors_ok }}
+                2. Shower Zone ({{ thresh_rh_open }}% / {{ thresh_abs_open }}g)?
+                   -> {{ is_shower_zone }}
+                3. Physics Delta (>{{ min_delta }}g)? -> {{ is_physics_good }}
+                   ({{ delta }}g)
+                4. Temp Safe (>{{ min_temp }}°C)? -> {{ is_temp_safe }}
+                5. Not Nagging (>10m)? -> {{ mins_since_last_run >= 10 }}
+
+                [Close Checks] 1. Min Open Time ({{ min_open_time }}m)?
+                   -> {{ time_open_mins >= min_open_time }}
+                2. Back to Normal (<{{ thresh_rh_close }}%)?
+                   -> {{ rh_inside <= thresh_rh_close }}
+                3. Not Nagging (>5m)? -> {{ mins_since_last_run >= 5 }}
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ sensors_ok }}"
+          - condition: template
+            value_template: "{{ window_state == 'off' }}"
+          - condition: template
+            value_template: "{{ is_shower_zone }}"
+          - condition: template
+            value_template: "{{ is_physics_good }}"
+          - condition: template
+            value_template: "{{ is_temp_safe }}"
+          - condition: template
+            value_template: "{{ mins_since_last_run >= 10 }}"
+        sequence:
+          - action: media_player.volume_set
+            target:
+              entity_id: "{{ media_player }}"
+            data:
+              volume_level: "{{ tts_volume }}"
+          - action: script.tts_speak
+            data:
+              message: >-
+                Hohe Luftfeuchtigkeit ({{ rh_inside | round(0) }}%). Bitte
+                lüften.
+          - action: media_player.volume_set
+            target:
+              entity_id: "{{ media_player }}"
+            data:
+              volume_level: "{{ current_volume }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ sensors_ok }}"
+          - condition: template
+            value_template: "{{ window_state == 'on' }}"
+          - condition: template
+            value_template: "{{ mins_since_last_run >= 5 }}"
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: "{{ temp_inside < min_temp }}"
+              - condition: and
+                conditions:
+                  - condition: template
+                    value_template: "{{ time_open_mins >= min_open_time }}"
+                  - condition: or
+                    conditions:
+                      - condition: template
+                        value_template: "{{ rh_inside <= thresh_rh_close }}"
+                      - condition: template
+                        value_template: "{{ abs_inside <= thresh_abs_close }}"
+                      - condition: template
+                        value_template: "{{ delta < 0.5 }}"
+        sequence:
+          - action: media_player.volume_set
+            target:
+              entity_id: "{{ media_player }}"
+            data:
+              volume_level: "{{ tts_volume }}"
+          - action: script.tts_speak
+            data:
+              message: |
+                {% if temp_inside < min_temp %}
+                  Achtung, Kälteschutz! Fenster schließen.
+                {% else %}
+                  Luftwerte normalisiert. Fenster kann zu.
+                {% endif %}
+          - action: media_player.volume_set
+            target:
+              entity_id: "{{ media_player }}"
+            data:
+              volume_level: "{{ current_volume }}"
+
+mode: single
