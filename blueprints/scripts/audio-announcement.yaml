@@ -45,7 +45,7 @@ blueprint:
           step: 0.05
 
     wake_remote:
-      name: Remote to wake speaker (optional)
+      name: Remote to wake speaker
       default: remote.homepod
       selector:
         entity:
@@ -67,43 +67,19 @@ fields:
 
 sequence:
   - variables:
+      input_media_player: !input default_media_player
+      input_tts_service: !input default_tts_service
+      input_language: !input default_language
+      input_tts_volume: !input default_tts_volume
+      input_restore_volume: !input default_restore_volume
+      input_wake_remote: !input wake_remote
+
       msg: "{{ message | default('') }}"
-      lang: "{{ language | default('!input default_language') }}"
-      player: "{{ media_player | default('!input default_media_player') }}"
-      vol: "{{ (volume if volume is defined else '!input default_tts_volume') | float }}"
-      svc: "!input default_tts_service"
+      lang: "{{ language | default(input_language) }}"
+      player: "{{ media_player | default(input_media_player) }}"
+      vol: "{{ (volume if volume is defined else input_tts_volume) | float }}"
+      svc: "{{ input_tts_service }}"
       restore_vol: >-
         {{ state_attr(player, 'volume_level')
-           | default('!input default_restore_volume')
-           | float('!input default_restore_volume') }}
-
-  - if:
-      - condition: template
-        value_template: "{{ msg | trim != '' }}"
-    then:
-      - action: remote.turn_on
-        target:
-          entity_id: "!input wake_remote"
-
-      - action: media_player.volume_set
-        target:
-          entity_id: "{{ player }}"
-        data:
-          volume_level: "{{ vol }}"
-
-      - action: tts.speak
-        target:
-          entity_id: "{{ svc }}"
-        data:
-          cache: true
-          media_player_entity_id: "{{ player }}"
-          message: "{{ msg }}"
-          language: "{{ lang }}"
-
-      - action: media_player.volume_set
-        target:
-          entity_id: "{{ player }}"
-        data:
-          volume_level: "{{ restore_vol }}"
-
-mode: single
+           | default(input_restore_volume)
+           | float(input_restore_volume) }}
