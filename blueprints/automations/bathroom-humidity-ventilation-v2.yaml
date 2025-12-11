@@ -48,36 +48,35 @@ blueprint:
         entity:
           domain: binary_sensor
 
-    # TTS helper script + overrides
+    # TTS helper script + optional overrides
     tts_script:
       name: TTS helper script
-      description: Script created from your TTS blueprint (e.g. script.tts_speak)
+      description: Script created from the TTS Speak Helper blueprint
       default: script.tts_speak
       selector:
         entity:
           domain: script
 
     tts_media_player:
-      name: Media player for TTS
-      default: media_player.homepod
+      name: Media player override (optional)
+      description: Leave empty to use the TTS helper's default
       selector:
         entity:
           domain: media_player
 
     tts_language:
-      name: TTS language
-      default: de-DE
+      name: TTS language override (optional)
+      description: Leave empty to use the TTS helper's default
+      default: ""
       selector:
         text: {}
 
     tts_volume:
-      name: TTS volume
-      default: 0.9
+      name: TTS volume override (optional)
+      description: Leave empty to use the TTS helper's default
+      default: ""
       selector:
-        number:
-          min: 0
-          max: 1
-          step: 0.05
+        text: {}
 
     thresh_rh_open:
       name: RH open threshold (%)
@@ -219,6 +218,12 @@ actions:
       is_physics_good: "{{ (abs_inside - abs_outside) >= min_delta }}"
       is_temp_safe: "{{ temp_inside > min_temp }}"
 
+      # TTS helper + raw override values (may be empty)
+      tts_script: !input tts_script
+      tts_media_player_in: !input tts_media_player
+      tts_language_in: !input tts_language
+      tts_volume_in: !input tts_volume
+
   - choose:
       - conditions:
           - condition: template
@@ -268,9 +273,9 @@ actions:
               message: >-
                 Hohe Luftfeuchtigkeit ({{ rh_inside | round(0) }}%). Bitte
                 lüften.
-              media_player: !input tts_media_player
-              language: !input tts_language
-              volume: !input tts_volume
+              media_player: "{{ tts_media_player_in }}"
+              language: "{{ tts_language_in }}"
+              volume: "{{ tts_volume_in }}"
 
       # CLOSE HINT (window open, can/should close)
       - conditions:
@@ -305,8 +310,8 @@ actions:
                 {% else %}
                   Luftwerte normalisiert. Fenster kann zu.
                 {% endif %}
-              media_player: !input tts_media_player
-              language: !input tts_language
-              volume: !input tts_volume
+              media_player: "{{ tts_media_player_in }}"
+              language: "{{ tts_language_in }}"
+              volume: "{{ tts_volume_in }}"
 
 mode: single
