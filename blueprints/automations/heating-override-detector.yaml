@@ -1,0 +1,59 @@
+blueprint:
+  name: Heating override detector (per climate, convention-based)
+  description: >
+    Detects manual heating overrides on selected climate entities and sets
+    a matching input_boolean.<climate_entity>_heating_override.
+    Example: climate.wohnzimmer -> input_boolean.climate_wohnzimmer_heating_override
+  domain: automation
+
+  input:
+    climates:
+      name: Climate entities to monitor
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+triggers:
+  - trigger: state
+    entity_id: !input climates
+
+actions:
+  - variables:
+      cl: "{{ trigger.entity_id }}"
+      # Derive override boolean entity_id from climate entity_id
+      override_bool: >
+        {{ 'input_boolean.' + cl.replace('.', '_') + '_heating_override' }}
+
+      # New state info
+      new_state: "{{ trigger.to_state }}"
+      new_mode: "{{ new_state.state if new_state is not none else 'unknown' }}"
+      preset: >
+        {{ new_state.attributes.preset_mode
+           if (new_state is not none and 'preset_mode' in new_state.attributes)
+           else none }}
+
+  - choose:
+      # Turn ON override when going to a "manual" state
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ new_state is not none
+                 and new_mode not in ['off','unavailable','unknown']
+                 and preset not in ['auto','schedule', none] }}
+        sequence:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: "{{ override_bool }}"
+
+      # Optional: clear override when climate goes fully off
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ new_mode == 'off' }}
+        sequence:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: "{{ override_bool }}"
+
+mode: restart
