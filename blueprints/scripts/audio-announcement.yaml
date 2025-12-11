@@ -1,115 +1,82 @@
-blueprint:
-  name: TTS Speak Helper with Volume Restore
-  description: >
-    Reusable script for TTS announcements with volume restore.
-    Pass 'message' when calling; optionally override language, media_player, volume.
-  domain: script
-
-  input:
-    default_media_player:
-      name: Default media player
-      default: media_player.homepod
-      selector:
-        entity:
-          domain: media_player
-
-    default_tts_service:
-      name: Default TTS service
-      default: tts.google_cloud
-      selector:
-        entity:
-          domain: tts
-
-    default_language:
-      name: Default language
-      default: de-DE
-      selector:
-        text: {}
-
-    default_tts_volume:
-      name: Default TTS volume
-      default: 0.7
-      selector:
-        number:
-          min: 0
-          max: 1
-          step: 0.05
-
-    default_restore_volume:
-      name: Fallback restore volume
-      default: 0.6
-      selector:
-        number:
-          min: 0
-          max: 1
-          step: 0.05
-
-    wake_remote:
-      name: Remote to wake speaker
-      default: remote.homepod
-      selector:
-        entity:
-          domain: remote
-
+alias: Audio Announcement with Volume Restore
+description: Reusable script for TTS announcements with volume control
 fields:
   message:
-    description: The TTS message
-    example: "Hello world"
+    name: Message
+    description: The message to speak
+    required: true
+    selector:
+      text: {}
   language:
-    description: Language override
-    example: en-US
+    name: Language
+    description: Language for TTS
+    example: de-DE
+    selector:
+      text: {}
   media_player:
-    description: Media player override
+    name: Media Player
+    description: Media player entity to use
     example: media_player.homepod
+    selector:
+      entity:
+        domain: media_player
+  service:
+    name: TTS Service
+    example: tts.google_cloud
+    selector:
+      entity:
+        domain: tts
   volume:
-    description: TTS volume override
-    example: 0.8
+    name: TTS Volume
+    description: Volume level for TTS
+    example: 0.7
+    selector:
+      number:
+        min: 0
+        max: 1
+        step: 0.05
 
 sequence:
   - variables:
-      input_media_player: !input default_media_player
-      input_tts_service: !input default_tts_service
-      input_language: !input default_language
-      input_tts_volume: !input default_tts_volume
-      input_restore_volume: !input default_restore_volume
+      default_language: de-DE
+      default_media_player: media_player.homepod
+      default_tts_volume: 0.7
+      default_tts_service: tts.google_cloud
+      default_restore_volume: 0.6
 
-      msg: "{{ message | default('') }}"
-      lang: "{{ language | default(input_language) }}"
-      player: "{{ media_player | default(input_media_player) }}"
-      vol: "{{ (volume if volume is defined else input_tts_volume) | float }}"
-      svc: "{{ input_tts_service }}"
-      restore_vol: >-
-        {{ state_attr(player, 'volume_level')
-           | default(input_restore_volume)
-           | float(input_restore_volume) }}
+      media_player_target: "{{ media_player | default(default_media_player) }}"
+      language_target: "{{ language | default(default_language) }}"
+      tts_service_target: "{{ service | default(default_tts_service) }}"
+      tts_volume_target: "{{ (volume if volume is not none else default_tts_volume) | float }}"
 
-  - if:
-      - condition: template
-        value_template: "{{ msg | trim != '' }}"
-    then:
-      - action: remote.turn_on
-        target:
-          entity_id: !input wake_remote
+      restore_volume: >-
+        {{ state_attr(media_player_target, 'volume_level')
+           | default(default_restore_volume)
+           | float(default_restore_volume) }}
 
-      - action: media_player.volume_set
-        target:
-          entity_id: "{{ player }}"
-        data:
-          volume_level: "{{ vol }}"
+  - action: remote.turn_on
+    target:
+      entity_id: remote.homepod
 
-      - action: tts.speak
-        target:
-          entity_id: "{{ svc }}"
-        data:
-          cache: true
-          media_player_entity_id: "{{ player }}"
-          message: "{{ msg }}"
-          language: "{{ lang }}"
+  - action: media_player.volume_set
+    target:
+      entity_id: "{{ media_player_target }}"
+    data:
+      volume_level: "{{ tts_volume_target }}"
 
-      - action: media_player.volume_set
-        target:
-          entity_id: "{{ player }}"
-        data:
-          volume_level: "{{ restore_vol }}"
+  - action: tts.speak
+    target:
+      entity_id: "{{ tts_service_target }}"
+    data:
+      cache: true
+      media_player_entity_id: "{{ media_player_target }}"
+      message: "{{ message }}"
+      language: "{{ language_target }}"
+
+  - action: media_player.volume_set
+    target:
+      entity_id: "{{ media_player_target }}"
+    data:
+      volume_level: "{{ restore_volume }}"
 
 mode: single
