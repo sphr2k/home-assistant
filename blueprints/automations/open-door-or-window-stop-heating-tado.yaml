@@ -1,79 +1,131 @@
 blueprint:
   name: Door/Window open-close, climate control
-  description: Turns off the climate device when a door/window is open and turns it back on when closed.
+  description: >
+    Turns off one or more climate devices when any selected window/door is open,
+    and restores them when all are closed. Includes a 2.5-minute safety check.
   domain: automation
+
   input:
-    door_window_entity:
-      name: Door/Window Sensor
-      description: The window or door sensor controlling the climate device.
+    room_windows:
+      name: Windows/doors for this room
+      description: One or more binary_sensors (window/door) in this room.
       selector:
         entity:
           domain: binary_sensor
-          device_class: 
-          - window
-          - door
-    climate_target:
-      name: Climate Device
-      description: The climate entity to control.
+          device_class:
+            - window
+            - door
+          multiple: true
+
+    room_climate:
+      name: Climate entities for this room
+      description: One or more climate entities for this room.
       selector:
         entity:
           domain: climate
+          multiple: true
+
     minimum_open_time:
-      name: Minimum time to wait before turning off climate
-      description: Time in seconds to wait after the window is opened.
+      name: Minimum open time before turning off climate
+      description: Time in seconds the windows must stay open.
       default: 30
       selector:
         number:
-          min: 0.0
-          max: 120.0
+          min: 0
+          max: 300
           unit_of_measurement: seconds
+          step: 1
           mode: slider
-          step: 1.0
-trigger:
-  - id: "window_opened"
-    platform: state
-    entity_id: !input 'door_window_entity'
-    from: 'off'
-    to: 'on'
 
-  - id: "window_closed"
-    platform: state
-    entity_id: !input 'door_window_entity'
-    from: 'on'
-    to: 'off'
-action:
+triggers:
+  # Any window changes state
+  - trigger: state
+    id: window_state_change
+    entity_id: !input room_windows
+
+  # Safety timer every 2.5 minutes
+  - trigger: time_pattern
+    id: safety_tick
+    minutes: "/2"
+
+actions:
+  - variables:
+      win_entities: !input room_windows
+
+      any_open: >
+        {{ expand(win_entities) | selectattr('state','eq','on') | list | count > 0 }}
+
+      all_closed: >
+        {{ expand(win_entities) | selectattr('state','ne','on') | list | count == (expand(win_entities) | list | count) }}
+
   - choose:
-      # If the window was opened
+      # Handle real-time window changes
       - conditions:
           - condition: trigger
-            id: "window_opened"
+            id: window_state_change
         sequence:
-          # Wait for the minimum time OR for the window to close
-          - wait_for_trigger:
-              - platform: state
-                entity_id: !input 'door_window_entity'
-                to: 'off'  # Window closed
-            timeout: !input 'minimum_open_time'
-            continue_on_timeout: true
-          # Check if the window is still open after the wait
-          - condition: state
-            entity_id: !input 'door_window_entity'
-            state: 'on'
-          # Turn off the climate device if the window is still open
-          - service: climate.turn_off
-            entity_id: !input 'climate_target'
+          - choose:
+              # A window just opened (at least one open)
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_open }}"
+                sequence:
+                  # Wait for min time or until all windows closed again
+                  - wait_for_trigger:
+                      - platform: state
+                        entity_id: !input room_windows
+                    timeout: !input minimum_open_time
+                    continue_on_timeout: true
 
-      # If the window was closed
+                  # Recompute window state after wait
+                  - variables:
+                      any_open_after: >
+                        {{ expand(win_entities) | selectattr('state','eq','on') | list | count > 0 }}
+
+                  # Only turn off climate if still at least one open
+                  - condition: template
+                    value_template: "{{ any_open_after }}"
+
+                  - action: climate.turn_off
+                    target:
+                      entity_id: !input room_climate
+
+              # All windows now closed
+              - conditions:
+                  - condition: template
+                    value_template: "{{ all_closed }}"
+                sequence:
+                  - action: climate.turn_on
+                    target:
+                      entity_id: !input room_climate
+
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input room_climate
+                    data:
+                      hvac_mode: auto
+
+      # Safety tick: enforce correct state
       - conditions:
           - condition: trigger
-            id: "window_closed"
+            id: safety_tick
         sequence:
-          # Turn the climate device back on immediately
-          - service: climate.turn_on
-            entity_id: !input 'climate_target'
-          # Optional: Restore to "auto" mode for Tado users
-          - service: climate.set_hvac_mode
-            target:
-              entity_id: !input 'climate_target'
-            data:
-              hvac_mode: auto
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_open }}"
+                sequence:
+                  - action: climate.turn_off
+                    target:
+                      entity_id: !input room_climate
+
+              - conditions:
+                  - condition: template
+                    value_template: "{{ all_closed }}"
+                sequence:
+                  - action: climate.turn_on
+                    target:
+                      entity_id: !input room_climate
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input room_climate
