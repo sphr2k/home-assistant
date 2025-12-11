@@ -45,7 +45,7 @@ blueprint:
           step: 0.05
 
     wake_remote:
-      name: Remote to wake speaker
+      name: Remote to wake speaker (optional)
       default: remote.homepod
       selector:
         entity:
@@ -56,60 +56,79 @@ fields:
     description: The TTS message
     example: "Hello world"
   language:
-    description: Language override
+    description: Language override (optional)
     example: en-US
   media_player:
-    description: Media player override
+    description: Media player override (optional)
     example: media_player.homepod
   volume:
-    description: TTS volume override
+    description: TTS volume override (optional)
     example: 0.8
 
 sequence:
   - variables:
+      # Defaults from blueprint inputs
       input_media_player: !input default_media_player
       input_tts_service: !input default_tts_service
       input_language: !input default_language
       input_tts_volume: !input default_tts_volume
       input_restore_volume: !input default_restore_volume
+      input_wake_remote: !input wake_remote
 
-      msg: "{{ message | default('') }}"
-      lang: "{{ language | default(input_language) }}"
-      player: "{{ media_player | default(input_media_player) }}"
-      vol: "{{ (volume if volume is defined else input_tts_volume) | float }}"
-      svc: "{{ input_tts_service }}"
-      restore_vol: >-
-        {{ state_attr(player, 'volume_level')
-           | default(input_restore_volume)
+      # Fields from caller (may be empty / not set)
+      msg: "{{ message | default('', true) }}"
+      media_player_field: "{{ media_player | default('', true) }}"
+      language_field: "{{ language | default('', true) }}"
+      volume_field: "{{ volume | default('', true) }}"
+
+      # Effective targets: override if non-empty, else default
+      media_player_target: "{{ media_player_field or input_media_player }}"
+      language_target: "{{ language_field or input_language }}"
+      tts_volume_target: "{{ (volume_field or input_tts_volume) | float }}"
+      tts_service_target: "{{ input_tts_service }}"
+      restore_volume: >-
+        {{ state_attr(media_player_target, 'volume_level')
+           | default(input_restore_volume, true)
            | float(input_restore_volume) }}
 
   - if:
       - condition: template
         value_template: "{{ msg | trim != '' }}"
     then:
-      - action: remote.turn_on
-        target:
-          entity_id: !input wake_remote
+      # Optional wake via remote (if entity exists)
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ input_wake_remote is not none
+                     and states(input_wake_remote) not in ['unknown','unavailable'] }}
+            sequence:
+              - action: remote.turn_on
+                target:
+                  entity_id: !input wake_remote
 
+      # Set TTS volume
       - action: media_player.volume_set
         target:
-          entity_id: "{{ player }}"
+          entity_id: "{{ media_player_target }}"
         data:
-          volume_level: "{{ vol }}"
+          volume_level: "{{ tts_volume_target }}"
 
+      # Speak
       - action: tts.speak
         target:
-          entity_id: "{{ svc }}"
+          entity_id: "{{ tts_service_target }}"
         data:
           cache: true
-          media_player_entity_id: "{{ player }}"
+          media_player_entity_id: "{{ media_player_target }}"
           message: "{{ msg }}"
-          language: "{{ lang }}"
+          language: "{{ language_target }}"
 
+      # Restore previous volume
       - action: media_player.volume_set
         target:
-          entity_id: "{{ player }}"
+          entity_id: "{{ media_player_target }}"
         data:
-          volume_level: "{{ restore_vol }}"
+          volume_level: "{{ restore_volume }}"
 
 mode: single
