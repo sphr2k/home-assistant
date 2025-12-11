@@ -48,12 +48,36 @@ blueprint:
         entity:
           domain: binary_sensor
 
-    media_player:
+    # TTS helper script + overrides
+    tts_script:
+      name: TTS helper script
+      description: Script created from your TTS blueprint (e.g. script.tts_speak)
+      default: script.tts_speak
+      selector:
+        entity:
+          domain: script
+
+    tts_media_player:
       name: Media player for TTS
-      default: media_player.hub
+      default: media_player.homepod
       selector:
         entity:
           domain: media_player
+
+    tts_language:
+      name: TTS language
+      default: de-DE
+      selector:
+        text: {}
+
+    tts_volume:
+      name: TTS volume
+      default: 0.9
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
 
     thresh_rh_open:
       name: RH open threshold (%)
@@ -151,7 +175,6 @@ actions:
       rh_inside_entity: !input sensor_rh_inside
       temp_inside_entity: !input sensor_temp_inside
       window_entity: !input window_contact
-      media_player_entity: !input media_player
 
       abs_inside: "{{ states(abs_inside_entity) | float(0) }}"
       abs_outside: "{{ states(abs_outside_entity) | float(0) }}"
@@ -196,11 +219,6 @@ actions:
       is_physics_good: "{{ (abs_inside - abs_outside) >= min_delta }}"
       is_temp_safe: "{{ temp_inside > min_temp }}"
 
-      media_player: "{{ media_player_entity }}"
-      default_volume: 0.7
-      current_volume: "{{ state_attr(media_player_entity, 'volume_level') | float(default_volume) }}"
-      tts_volume: 0.9
-
   - choose:
       - conditions:
           - condition: template
@@ -230,6 +248,7 @@ actions:
                 3. Not Nagging (>5m)? -> {{ mins_since_last_run >= 5 }}
 
   - choose:
+      # OPEN HINT (window closed, should open)
       - conditions:
           - condition: template
             value_template: "{{ sensors_ok }}"
@@ -244,22 +263,16 @@ actions:
           - condition: template
             value_template: "{{ mins_since_last_run >= 10 }}"
         sequence:
-          - action: media_player.volume_set
-            target:
-              entity_id: "{{ media_player }}"
-            data:
-              volume_level: "{{ tts_volume }}"
-          - action: script.tts_speak
+          - action: !input tts_script
             data:
               message: >-
                 Hohe Luftfeuchtigkeit ({{ rh_inside | round(0) }}%). Bitte
                 lüften.
-          - action: media_player.volume_set
-            target:
-              entity_id: "{{ media_player }}"
-            data:
-              volume_level: "{{ current_volume }}"
+              media_player: !input tts_media_player
+              language: !input tts_language
+              volume: !input tts_volume
 
+      # CLOSE HINT (window open, can/should close)
       - conditions:
           - condition: template
             value_template: "{{ sensors_ok }}"
@@ -284,12 +297,7 @@ actions:
                       - condition: template
                         value_template: "{{ delta < 0.5 }}"
         sequence:
-          - action: media_player.volume_set
-            target:
-              entity_id: "{{ media_player }}"
-            data:
-              volume_level: "{{ tts_volume }}"
-          - action: script.tts_speak
+          - action: !input tts_script
             data:
               message: |
                 {% if temp_inside < min_temp %}
@@ -297,10 +305,8 @@ actions:
                 {% else %}
                   Luftwerte normalisiert. Fenster kann zu.
                 {% endif %}
-          - action: media_player.volume_set
-            target:
-              entity_id: "{{ media_player }}"
-            data:
-              volume_level: "{{ current_volume }}"
+              media_player: !input tts_media_player
+              language: !input tts_language
+              volume: !input tts_volume
 
 mode: single
