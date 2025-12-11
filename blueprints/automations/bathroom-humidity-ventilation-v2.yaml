@@ -59,10 +59,10 @@ blueprint:
 
     tts_media_player:
       name: Media player override (optional)
-      description: Leave empty to use the TTS helper's default
+      description: Entity ID string; leave empty to use TTS helper default
+      default: ""
       selector:
-        entity:
-          domain: media_player
+        text: {}
 
     tts_language:
       name: TTS language override (optional)
