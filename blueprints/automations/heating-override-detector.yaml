@@ -1,14 +1,14 @@
 blueprint:
-  name: Heating override detector (per climate, convention-based)
+  name: Tado heating override detector
   description: >
-    Detects manual heating overrides on selected climate entities and sets
-    a matching input_boolean.<climate_entity>_heating_override.
-    Example: climate.wohnzimmer -> input_boolean.climate_wohnzimmer_heating_override
+    For each selected Tado climate, watches its Overlay sensor.
+    If Overlay != 'Off' and hvac_mode != 'off', turns on
+    input_boolean.<climate_entity>_override.
   domain: automation
 
   input:
     climates:
-      name: Climate entities to monitor
+      name: Tado climate entities
       selector:
         entity:
           domain: climate
@@ -21,36 +21,32 @@ triggers:
 actions:
   - variables:
       cl: "{{ trigger.entity_id }}"
-      # Derive override boolean entity_id from climate entity_id
-      override_bool: >
-        {{ 'input_boolean.' + cl.replace('.', '_') + '_override' }}
+      # Expected overlay sensor: sensor.<climate_object_id>_overlay
+      object_id: "{{ cl.split('.')[1] }}"
+      overlay_sensor: "{{ 'sensor.' ~ object_id ~ '_overlay' }}"
+      override_bool: "{{ 'input_boolean.' ~ cl.replace('.', '_') ~ '_override' }}"
 
-      # New state info
-      new_state: "{{ trigger.to_state }}"
-      new_mode: "{{ new_state.state if new_state is not none else 'unknown' }}"
-      preset: >
-        {{ new_state.attributes.preset_mode
-           if (new_state is not none and 'preset_mode' in new_state.attributes)
-           else none }}
+      new_climate: "{{ trigger.to_state }}"
+      hvac_mode: "{{ new_climate.state if new_climate is not none else 'unknown' }}"
+      overlay_state: "{{ states(overlay_sensor) | lower }}"
 
   - choose:
-      # Turn ON override when going to a "manual" state
+      # Turn ON override when overlay is active and climate not off
       - conditions:
           - condition: template
             value_template: >
-              {{ new_state is not none
-                 and new_mode not in ['off','unavailable','unknown']
-                 and preset not in ['auto','schedule', none] }}
+              {{ overlay_state not in ['off','unknown','unavailable']
+                 and hvac_mode not in ['off','unavailable','unknown'] }}
         sequence:
           - action: input_boolean.turn_on
             target:
               entity_id: "{{ override_bool }}"
 
-      # Optional: clear override when climate goes fully off
+      # Optional: clear override when turned fully off or overlay cleared
       - conditions:
           - condition: template
             value_template: >
-              {{ new_mode == 'off' }}
+              {{ hvac_mode == 'off' or overlay_state in ['off','unknown','unavailable'] }}
         sequence:
           - action: input_boolean.turn_off
             target:
