@@ -23,7 +23,7 @@ actions:
       cl: "{{ trigger.entity_id }}"
       # Derive override boolean entity_id from climate entity_id
       override_bool: >
-        {{ 'input_boolean.' + cl.replace('.', '_') + '_heating_override' }}
+        {{ 'input_boolean.' + cl.replace('.', '_') + '_override' }}
 
       # New state info
       new_state: "{{ trigger.to_state }}"
