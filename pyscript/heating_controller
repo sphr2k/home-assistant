@@ -1,0 +1,208 @@
+# config/pyscript/heating_state_machine.py
+
+from transitions import Machine
+
+# Pyscript runtime-provided helpers (stubbed for static analysis)
+from pyscript_builtins import log, service, state, state_trigger, time_trigger
+# Generated stubs with concrete entity IDs for static analysis
+from pyscript_generated import (  # noqa: F401
+    binary_sensor,
+    climate,
+    input_number,
+    sensor,
+)
+
+class HeatingController:
+    """Room heating state machine using transitions library"""
+    
+    states = [
+        'manual_override',
+        'window_open',
+        'heating_on',
+        'heating_off',
+        'no_heat_season'
+    ]
+    
+    def __init__(self, room_name, friendly_name, state_entity):
+        self.room = room_name
+        self.friendly_name = friendly_name
+        self.state_entity = state_entity
+        
+        # Map room names to generated stub entities (accessed at runtime)
+        entity_map = {
+            'arbeitszimmer': {
+                'window': binary_sensor.arbeitszimmer_fenster_contact,
+                'overlay': binary_sensor.arbeitszimmer_overlay,
+                'climate': climate.arbeitszimmer,
+                'override_temp': input_number.climate_arbeitszimmer_override_temp,
+            },
+            'bad': {
+                'window': binary_sensor.bad_fenster_contact,
+                'overlay': binary_sensor.bad_overlay,
+                'climate': climate.bad,
+                'override_temp': input_number.climate_bad_override_temp,
+            },
+            'essbereich': {
+                'window': None,  # No window sensor for essbereich
+                'overlay': binary_sensor.essbereich_overlay,
+                'climate': climate.essbereich,
+                'override_temp': input_number.climate_essbereich_override_temp,
+            },
+            'wohnzimmer': {
+                'window': binary_sensor.wohnzimmer_balkontur_contact,
+                'overlay': binary_sensor.wohnzimmer_overlay,
+                'climate': climate.wohnzimmer,
+                'override_temp': input_number.climate_wohnzimmer_override_temp,
+            },
+        }
+        self.entities = entity_map[room_name]
+        
+        # State machine definition
+        transitions = [
+            {'trigger': 'window_opened', 'source': '*', 'dest': 'window_open'},
+            {'trigger': 'window_closed', 'source': 'window_open', 'dest': 'evaluate'},
+            
+            {'trigger': 'override_set', 'source': '*', 'dest': 'manual_override'},
+            {'trigger': 'override_cleared', 'source': 'manual_override', 'dest': 'evaluate'},
+            
+            {'trigger': 'season_off', 'source': '*', 'dest': 'no_heat_season'},
+            {'trigger': 'season_on', 'source': 'no_heat_season', 'dest': 'evaluate'},
+            
+            {'trigger': 'temp_cold', 'source': 'evaluate', 'dest': 'heating_on'},
+            {'trigger': 'temp_warm', 'source': 'evaluate', 'dest': 'heating_off'},
+            
+            {'trigger': 'evaluate', 'source': '*', 'dest': 'evaluate'},
+        ]
+        
+        self.machine = Machine(
+            model=self,
+            states=self.states,
+            transitions=transitions,
+            initial='heating_off',
+            auto_transitions=False,
+            ignore_invalid_triggers=True
+        )
+        
+        # State entry callbacks
+        self.machine.on_enter_window_open(self._on_window_open)
+        self.machine.on_enter_manual_override(self._on_manual_override)
+        self.machine.on_enter_heating_on(self._on_heating_on)
+        self.machine.on_enter_heating_off(self._on_heating_off)
+        self.machine.on_enter_no_heat_season(self._on_no_heat_season)
+        self.machine.on_enter_evaluate(self._evaluate_next_state)
+    
+    def _log(self, message):
+        """Log to HA logbook"""
+        service.call("logbook", "log",
+                    name=self.friendly_name,
+                    entity_id=f"input_select.{self.room}_heating_state",
+                    message=message)
+    
+    def _evaluate_next_state(self):
+        """Logic: check conditions and transition"""
+        window_state = self.entities['window'].state if self.entities['window'] else "off"
+        override = float(self.entities['override_temp'].state or -1)
+        outside_temp = float(sensor.lage_outdoor_temperature.state or 99)
+        overlay = self.entities['overlay'].state
+        
+        # Conditions
+        if window_state == "on":
+            self.window_opened()
+        elif override > 0 and overlay == "on":
+            self.override_set()
+        elif outside_temp > 17:  # No heat season
+            self.season_off()
+        elif outside_temp < 17:  # Cold, heating allowed
+            self.temp_cold()
+        else:
+            self.temp_warm()
+    
+    def _on_window_open(self):
+        """Enter: window open → turn off climate"""
+        self.entities['climate'].turn_off()
+        self._log("Climate off → window open")
+        state.set(self.state_entity, self.state)
+    
+    def _on_manual_override(self):
+        """Enter: manual override → set temp"""
+        override = float(self.entities['override_temp'].state or 21)
+        self.entities['climate'].set_temperature(temperature=override, hvac_mode="heat")
+        self._log(f"Manual override ({override}°C)")
+        state.set(self.state_entity, self.state)
+    
+    def _on_heating_on(self):
+        """Enter: heating on → set auto"""
+        self.entities['climate'].set_hvac_mode("auto")
+        self._log("Heating on → auto mode")
+        state.set(self.state_entity, self.state)
+    
+    def _on_heating_off(self):
+        """Enter: heating off → turn off"""
+        self.entities['climate'].turn_off()
+        self._log("Heating off")
+        state.set(self.state_entity, self.state)
+    
+    def _on_no_heat_season(self):
+        """Enter: no heat season → turn off"""
+        self.entities['climate'].turn_off()
+        self._log("No heat season → off")
+        state.set(self.state_entity, self.state)
+
+
+# Initialize controllers for each room
+sm_arbeitszimmer = HeatingController("arbeitszimmer", "Arbeitszimmer Heizung", "input_select.arbeitszimmer_heating_state")
+sm_bad = HeatingController("bad", "Bad Heizung", "input_select.bad_heating_state")
+sm_essbereich = HeatingController("essbereich", "Essbereich Heizung", "input_select.essbereich_heating_state")
+sm_wohnzimmer = HeatingController("wohnzimmer", "Wohnzimmer Heizung", "input_select.wohnzimmer_heating_state")
+
+
+# === TRIGGERS ===
+
+@state_trigger("binary_sensor.arbeitszimmer_fenster_contact, binary_sensor.arbeitszimmer_overlay, input_number.climate_arbeitszimmer_override_temp, sensor.lage_outdoor_temperature")
+def arbeitszimmer_heating_trigger():
+    """Re-evaluate Arbeitszimmer heating state"""
+    sm_arbeitszimmer.evaluate()
+
+@state_trigger("binary_sensor.bad_fenster_contact, binary_sensor.bad_overlay, input_number.climate_bad_override_temp, sensor.lage_outdoor_temperature")
+def bad_heating_trigger():
+    """Re-evaluate Bad heating state"""
+    sm_bad.evaluate()
+
+@state_trigger("binary_sensor.essbereich_overlay, input_number.climate_essbereich_override_temp, sensor.lage_outdoor_temperature")
+def essbereich_heating_trigger():
+    """Re-evaluate Essbereich heating state"""
+    sm_essbereich.evaluate()
+
+@state_trigger("binary_sensor.wohnzimmer_balkontur_contact, binary_sensor.wohnzimmer_overlay, input_number.climate_wohnzimmer_override_temp, sensor.lage_outdoor_temperature")
+def wohnzimmer_heating_trigger():
+    """Re-evaluate Wohnzimmer heating state"""
+    sm_wohnzimmer.evaluate()
+
+
+# === NIGHTLY RESET (2 AM) ===
+
+@time_trigger("cron(0 2 * * *)")
+def nightly_reset():
+    """Clear all overrides and re-evaluate"""
+    input_number.climate_arbeitszimmer_override_temp.set_value(-1)
+    input_number.climate_bad_override_temp.set_value(-1)
+    input_number.climate_essbereich_override_temp.set_value(-1)
+    input_number.climate_wohnzimmer_override_temp.set_value(-1)
+    
+    sm_arbeitszimmer.evaluate()
+    sm_bad.evaluate()
+    sm_essbereich.evaluate()
+    sm_wohnzimmer.evaluate()
+    
+    log.info("[Heating] Nightly reset completed")
+
+
+# === SAFETY TICK (every 5 min) ===
+
+@time_trigger("cron(*/5 * * * *)")
+def safety_tick():
+    """Enforce correct state periodically"""
+    sm_arbeitszimmer.evaluate()
+    sm_bad.evaluate()
+    sm_essbereich.evaluate()
+    sm_wohnzimmer.evaluate()
