@@ -1,0 +1,403 @@
+blueprint:
+  name: Room Heating Control
+  description: >
+    Per-room heating control with window detection, manual override preservation
+    based on Tado overlay sensors, seasonal on/off, and nightly reset.
+  domain: automation
+
+  input:
+    room_climate:
+      name: Climate entities for this room
+      description: One or more climate entities (e.g. Tado radiators).
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    room_windows:
+      name: Windows/doors for this room
+      description: One or more window/door binary sensors.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - window
+            - door
+          multiple: true
+
+    outside_temp_sensor:
+      name: Outside temperature sensor
+      default: sensor.lage_outdoor_temperature
+      selector:
+        entity:
+          domain: sensor
+
+    comfort_temp_threshold:
+      name: Heating allowed below (°C)
+      description: Below this outside temp, heating is allowed (auto mode).
+      default: 17
+      selector:
+        number:
+          min: -20
+          max: 30
+          step: 0.5
+
+    no_heat_start:
+      name: No-heat season start (MM-DD)
+      description: From this date, heating is forced off (e.g. 05-15).
+      default: "05-15"
+      selector:
+        text: {}
+
+    no_heat_end:
+      name: No-heat season end (MM-DD)
+      description: Until this date, heating is forced off (e.g. 09-15).
+      default: "09-15"
+      selector:
+        text: {}
+
+    min_open_time:
+      name: Minimum open time before turning off (seconds)
+      description: Wait this long after window opens before turning off heating.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          mode: slider
+
+    nightly_reset_time:
+      name: Nightly reset time
+      description: Time to clear overrides and re-apply correct mode.
+      default: "02:00:00"
+      selector:
+        time: {}
+
+    debug_mode:
+      name: Enable debug logging
+      description: Log detailed information to the logbook.
+      default: false
+      selector:
+        boolean: {}
+
+variables:
+  climates: !input room_climate
+  windows: !input room_windows
+  debug_enabled: !input debug_mode
+
+  # Derive overlay sensor and override helper from first climate entity
+  first_climate: "{{ climates[0] if climates is iterable else climates }}"
+  object_id: "{{ first_climate.split('.')[1] }}"
+  overlay_sensor: "{{ 'binary_sensor.' ~ object_id ~ '_overlay' }}"
+  override_temp_helper: "{{ 'input_number.climate_' ~ object_id ~ '_override_temp' }}"
+
+  outside_temp_sensor: !input outside_temp_sensor
+  comfort_threshold: !input comfort_temp_threshold
+  no_heat_start: !input no_heat_start
+  no_heat_end: !input no_heat_end
+  min_open_time: !input min_open_time
+
+  # Current states
+  overlay_state: "{{ states(overlay_sensor) | lower }}"
+  hvac_mode: "{{ states(first_climate) }}"
+  current_temp: "{{ state_attr(first_climate, 'temperature') | float(-1) }}"
+  override_temp: "{{ states(override_temp_helper) | float(-1) }}"
+
+  any_window_open: >
+    {{ expand(windows) | selectattr('state','eq','on') | list | count > 0 }}
+
+  all_windows_closed: >
+    {{ expand(windows) | selectattr('state','eq','on') | list | count == 0 }}
+
+  outside_temp: "{{ states(outside_temp_sensor) | float(99) }}"
+
+  in_no_heat_season: >
+    {% set today = now().strftime('%m-%d') %}
+    {% if no_heat_start <= no_heat_end %}
+      {{ no_heat_start <= today < no_heat_end }}
+    {% else %}
+      {{ today >= no_heat_start or today < no_heat_end }}
+    {% endif %}
+
+trigger:
+  # Overlay sensor changes (manual override detection)
+  - trigger: state
+    id: overlay_change
+    entity_id: "{{ overlay_sensor }}"
+
+  # Windows change
+  - trigger: state
+    id: window_change
+    entity_id: !input room_windows
+
+  # Outside temp changes
+  - trigger: state
+    id: outside_temp_change
+    entity_id: !input outside_temp_sensor
+
+  # Nightly reset
+  - trigger: time
+    id: nightly_reset
+    at: !input nightly_reset_time
+
+  # Safety tick every 2.5 minutes
+  - trigger: time_pattern
+    id: safety_tick
+    minutes: "/2"
+    seconds: "30"
+
+action:
+  # Debug log
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        sequence:
+          - action: logbook.log
+            data:
+              name: "Room Heating Control"
+              entity_id: "{{ this.entity_id }}"
+              message: >
+                Trigger: {{ trigger.id }}.
+                Windows: {{ 'open' if any_window_open else 'closed' }}.
+                Overlay: {{ overlay_state }}.
+                Override temp: {{ override_temp }}°C.
+                HVAC: {{ hvac_mode }}, current temp: {{ current_temp }}°C.
+                Outside: {{ outside_temp }}°C, no-heat season: {{ in_no_heat_season }}.
+
+  - choose:
+      # HANDLE OVERLAY CHANGE: detect manual override
+      - conditions:
+          - condition: trigger
+            id: overlay_change
+        sequence:
+          - choose:
+              # Overlay On → store override temp
+              - conditions:
+                  - condition: template
+                    value_template: >
+                      {{ overlay_state == 'on'
+                         and hvac_mode not in ['off','unavailable','unknown'] }}
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled }}"
+                        sequence:
+                          - action: logbook.log
+                            data:
+                              name: "Room Heating Control"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Manual override detected → storing {{ current_temp }}°C"
+
+                  - action: input_number.set_value
+                    target:
+                      entity_id: "{{ override_temp_helper }}"
+                    data:
+                      value: "{{ current_temp }}"
+
+              # Overlay Off → clear override
+              - conditions:
+                  - condition: template
+                    value_template: "{{ overlay_state == 'off' }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled }}"
+                        sequence:
+                          - action: logbook.log
+                            data:
+                              name: "Room Heating Control"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Schedule active → clearing override to -1"
+
+                  - action: input_number.set_value
+                    target:
+                      entity_id: "{{ override_temp_helper }}"
+                    data:
+                      value: -1
+
+      # HANDLE WINDOW CHANGE
+      - conditions:
+          - condition: trigger
+            id: window_change
+        sequence:
+          - choose:
+              # Window opened
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_window_open }}"
+                sequence:
+                  # Wait for min time or window close
+                  - wait_for_trigger:
+                      - platform: template
+                        value_template: "{{ expand(windows) | selectattr('state','eq','on') | list | count == 0 }}"
+                    timeout: "{{ min_open_time }}"
+                    continue_on_timeout: true
+
+                  # Recheck if still open
+                  - variables:
+                      still_open: >
+                        {{ expand(windows) | selectattr('state','eq','on') | list | count > 0 }}
+
+                  - condition: template
+                    value_template: "{{ still_open }}"
+
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled }}"
+                        sequence:
+                          - action: logbook.log
+                            data:
+                              name: "Room Heating Control"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Window open → turning off climate"
+
+                  - action: climate.turn_off
+                    target:
+                      entity_id: !input room_climate
+
+              # Window closed
+              - conditions:
+                  - condition: template
+                    value_template: "{{ all_windows_closed }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled }}"
+                        sequence:
+                          - action: logbook.log
+                            data:
+                              name: "Room Heating Control"
+                              entity_id: "{{ this.entity_id }}"
+                              message: >
+                                Windows closed. Override temp: {{ override_temp }}°C.
+                                Will restore {{ 'manual mode' if override_temp > 0 else 'auto' }}.
+
+                  - choose:
+                      # Restore manual override temp
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ override_temp > 0 }}"
+                        sequence:
+                          - action: climate.set_temperature
+                            target:
+                              entity_id: !input room_climate
+                            data:
+                              temperature: "{{ override_temp }}"
+                              hvac_mode: heat
+
+                      # Restore auto (if heating allowed)
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ override_temp <= 0 }}"
+                        sequence:
+                          - variables:
+                              target_mode: >
+                                {% if in_no_heat_season %}
+                                  off
+                                {% elif outside_temp < comfort_threshold %}
+                                  auto
+                                {% else %}
+                                  off
+                                {% endif %}
+
+                          - action: climate.set_hvac_mode
+                            target:
+                              entity_id: !input room_climate
+                            data:
+                              hvac_mode: "{{ target_mode }}"
+
+      # HANDLE OUTSIDE TEMP CHANGE / NIGHTLY RESET
+      - conditions:
+          - condition: or
+            conditions:
+              - condition: trigger
+                id: outside_temp_change
+              - condition: trigger
+                id: nightly_reset
+        sequence:
+          # Clear override at nightly reset
+          - choose:
+              - conditions:
+                  - condition: trigger
+                    id: nightly_reset
+                sequence:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: "{{ override_temp_helper }}"
+                    data:
+                      value: -1
+
+          # Apply correct mode if windows closed and no override
+          - condition: template
+            value_template: "{{ all_windows_closed and override_temp <= 0 }}"
+
+          - variables:
+              target_mode: >
+                {% if in_no_heat_season %}
+                  off
+                {% elif outside_temp < comfort_threshold %}
+                  auto
+                {% else %}
+                  off
+                {% endif %}
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ debug_enabled }}"
+                sequence:
+                  - action: logbook.log
+                    data:
+                      name: "Room Heating Control"
+                      entity_id: "{{ this.entity_id }}"
+                      message: "Enforcing mode: {{ target_mode }}"
+
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input room_climate
+            data:
+              hvac_mode: "{{ target_mode }}"
+
+      # SAFETY TICK: enforce correct state
+      - conditions:
+          - condition: trigger
+            id: safety_tick
+        sequence:
+          - choose:
+              # Any window open → ensure off
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_window_open }}"
+                sequence:
+                  - action: climate.turn_off
+                    target:
+                      entity_id: !input room_climate
+
+              # Windows closed, no override → enforce global mode
+              - conditions:
+                  - condition: template
+                    value_template: "{{ all_windows_closed and override_temp <= 0 }}"
+                sequence:
+                  - variables:
+                      target_mode: >
+                        {% if in_no_heat_season %}
+                          off
+                        {% elif outside_temp < comfort_threshold %}
+                          auto
+                        {% else %}
+                          off
+                        {% endif %}
+
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input room_climate
+                    data:
+                      hvac_mode: "{{ target_mode }}"
+
+mode: restart
