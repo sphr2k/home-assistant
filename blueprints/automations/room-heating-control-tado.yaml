@@ -1,5 +1,5 @@
 blueprint:
-  name: Room Heating Control
+  name: Room heating control (all-in-one)
   description: >
     Per-room heating control with window detection, manual override preservation
     based on Tado overlay sensors, seasonal on/off, and nightly reset.
@@ -24,6 +24,20 @@ blueprint:
             - window
             - door
           multiple: true
+
+    overlay_sensor:
+      name: Tado overlay sensor
+      description: The binary_sensor.*_overlay for this room (e.g. binary_sensor.arbeitszimmer_overlay).
+      selector:
+        entity:
+          domain: binary_sensor
+
+    override_temp_helper:
+      name: Override temperature helper
+      description: The input_number helper (e.g. input_number.climate_arbeitszimmer_override_temp).
+      selector:
+        entity:
+          domain: input_number
 
     outside_temp_sensor:
       name: Outside temperature sensor
@@ -68,7 +82,7 @@ blueprint:
           mode: slider
 
     nightly_reset_time:
-      name: Nightly reset time
+      name: Nightly reset time (24h format)
       description: Time to clear overrides and re-apply correct mode.
       default: "02:00:00"
       selector:
@@ -84,14 +98,11 @@ blueprint:
 variables:
   climates: !input room_climate
   windows: !input room_windows
+  overlay_sensor_entity: !input overlay_sensor
+  override_temp_helper_entity: !input override_temp_helper
   debug_enabled: !input debug_mode
 
-  # Derive overlay sensor and override helper from first climate entity
   first_climate: "{{ climates[0] if climates is iterable else climates }}"
-  object_id: "{{ first_climate.split('.')[1] }}"
-  overlay_sensor: "{{ 'binary_sensor.' ~ object_id ~ '_overlay' }}"
-  override_temp_helper: "{{ 'input_number.climate_' ~ object_id ~ '_override_temp' }}"
-
   outside_temp_sensor: !input outside_temp_sensor
   comfort_threshold: !input comfort_temp_threshold
   no_heat_start: !input no_heat_start
@@ -99,10 +110,10 @@ variables:
   min_open_time: !input min_open_time
 
   # Current states
-  overlay_state: "{{ states(overlay_sensor) | lower }}"
+  overlay_state: "{{ states(overlay_sensor_entity) | lower }}"
   hvac_mode: "{{ states(first_climate) }}"
   current_temp: "{{ state_attr(first_climate, 'temperature') | float(-1) }}"
-  override_temp: "{{ states(override_temp_helper) | float(-1) }}"
+  override_temp: "{{ states(override_temp_helper_entity) | float(-1) }}"
 
   any_window_open: >
     {{ expand(windows) | selectattr('state','eq','on') | list | count > 0 }}
@@ -124,7 +135,7 @@ trigger:
   # Overlay sensor changes (manual override detection)
   - trigger: state
     id: overlay_change
-    entity_id: "{{ overlay_sensor }}"
+    entity_id: !input overlay_sensor
 
   # Windows change
   - trigger: state
@@ -193,7 +204,7 @@ action:
 
                   - action: input_number.set_value
                     target:
-                      entity_id: "{{ override_temp_helper }}"
+                      entity_id: "{{ override_temp_helper_entity }}"
                     data:
                       value: "{{ current_temp }}"
 
@@ -215,7 +226,7 @@ action:
 
                   - action: input_number.set_value
                     target:
-                      entity_id: "{{ override_temp_helper }}"
+                      entity_id: "{{ override_temp_helper_entity }}"
                     data:
                       value: -1
 
@@ -329,7 +340,7 @@ action:
                 sequence:
                   - action: input_number.set_value
                     target:
-                      entity_id: "{{ override_temp_helper }}"
+                      entity_id: "{{ override_temp_helper_entity }}"
                     data:
                       value: -1
 
