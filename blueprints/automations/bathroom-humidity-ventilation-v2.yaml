@@ -1,5 +1,5 @@
 blueprint:
-  name: Bathroom Humidity Ventilation v2
+  name: Bathroom Humidity Ventilation v2.1
   description: >
     Data-driven ventilation advice with volume control, debug logging,
     and nag limits, based on absolute humidity and temperature.
