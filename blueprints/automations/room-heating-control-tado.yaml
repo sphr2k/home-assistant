@@ -159,24 +159,6 @@ trigger:
     seconds: "30"
 
 action:
-  # Initial state log
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ debug_enabled }}"
-        sequence:
-          - action: logbook.log
-            data:
-              name: "{{ this.attributes.friendly_name }}"
-              entity_id: "{{ this.entity_id }}"
-              message: >
-                [{{ trigger.id }}]
-                window: {{ 'open' if any_window_open else 'closed' }} |
-                overlay: {{ overlay_state }} |
-                override: {{ override_temp }}°C |
-                hvac: {{ hvac_mode }} |
-                out: {{ outside_temp }}°C
-
   - choose:
       # HANDLE OVERLAY CHANGE: detect manual override
       - conditions:
@@ -208,10 +190,10 @@ action:
                     data:
                       value: "{{ current_temp }}"
 
-              # Overlay Off → clear override
+              # Overlay Off → clear override (only if one was actually set)
               - conditions:
                   - condition: template
-                    value_template: "{{ overlay_state == 'off' }}"
+                    value_template: "{{ overlay_state == 'off' and override_temp > 0 }}"
                 sequence:
                   - choose:
                       - conditions:
@@ -222,7 +204,7 @@ action:
                             data:
                               name: "{{ this.attributes.friendly_name }}"
                               entity_id: "{{ this.entity_id }}"
-                              message: "Override cleared → back to schedule"
+                              message: "Override cleared ({{ override_temp }}°C) → back to schedule"
 
                   - action: input_number.set_value
                     target:
@@ -259,7 +241,7 @@ action:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ debug_enabled }}"
+                            value_template: "{{ debug_enabled and hvac_mode != 'off' }}"
                         sequence:
                           - action: logbook.log
                             data:
@@ -285,7 +267,7 @@ action:
                           - choose:
                               - conditions:
                                   - condition: template
-                                    value_template: "{{ debug_enabled }}"
+                                    value_template: "{{ debug_enabled and hvac_mode == 'off' }}"
                                 sequence:
                                   - action: logbook.log
                                     data:
@@ -318,13 +300,13 @@ action:
                           - choose:
                               - conditions:
                                   - condition: template
-                                    value_template: "{{ debug_enabled }}"
+                                    value_template: "{{ debug_enabled and hvac_mode != target_mode }}"
                                 sequence:
                                   - action: logbook.log
                                     data:
                                       name: "{{ this.attributes.friendly_name }}"
                                       entity_id: "{{ this.entity_id }}"
-                                      message: "Restored auto mode → {{ target_mode }}"
+                                      message: "Restored mode ({{ hvac_mode }} → {{ target_mode }})"
 
                           - action: climate.set_hvac_mode
                             target:
@@ -350,7 +332,7 @@ action:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ debug_enabled }}"
+                            value_template: "{{ debug_enabled and override_temp > 0 }}"
                         sequence:
                           - action: logbook.log
                             data:
@@ -381,13 +363,13 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ debug_enabled }}"
+                    value_template: "{{ debug_enabled and hvac_mode != target_mode }}"
                 sequence:
                   - action: logbook.log
                     data:
                       name: "{{ this.attributes.friendly_name }}"
                       entity_id: "{{ this.entity_id }}"
-                      message: "Enforcing mode → {{ target_mode }}"
+                      message: "Mode enforced ({{ hvac_mode }} → {{ target_mode }})"
 
           - action: climate.set_hvac_mode
             target:
@@ -395,7 +377,7 @@ action:
             data:
               hvac_mode: "{{ target_mode }}"
 
-      # SAFETY TICK: enforce correct state
+      # SAFETY TICK: enforce correct state (silent unless mode actually changes)
       - conditions:
           - condition: trigger
             id: safety_tick
@@ -404,7 +386,7 @@ action:
               # Any window open → ensure off
               - conditions:
                   - condition: template
-                    value_template: "{{ any_window_open }}"
+                    value_template: "{{ any_window_open and hvac_mode != 'off' }}"
                 sequence:
                   - action: climate.turn_off
                     target:
@@ -424,6 +406,9 @@ action:
                         {% else %}
                           off
                         {% endif %}
+
+                  - condition: template
+                    value_template: "{{ hvac_mode != target_mode }}"
 
                   - action: climate.set_hvac_mode
                     target:
