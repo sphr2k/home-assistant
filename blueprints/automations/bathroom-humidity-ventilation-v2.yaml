@@ -77,6 +77,31 @@ blueprint:
       selector:
         text: {}
 
+    tts_message_open:
+      name: TTS message when window is closed (open hint)
+      description: Jinja templates allowed; defaults to humidity + open request
+      default: >-
+        Hohe Luftfeuchtigkeit ({{ rh_inside | round(0) }}%). Bitte Bad Fenster öffnen.
+      selector:
+        text:
+          multiline: true
+
+    tts_message_close_cold:
+      name: TTS message when too cold (close hint)
+      description: Default cold-protection close request
+      default: Achtung, Kälteschutz! Bad Fenster schließen.
+      selector:
+        text:
+          multiline: true
+
+    tts_message_close_normal:
+      name: TTS message when normalized (close hint)
+      description: Default close request after humidity normalized
+      default: Luftwerte normalisiert. Bad Fenster schließen.
+      selector:
+        text:
+          multiline: true
+
     thresh_rh_open:
       name: RH open threshold (%)
       default: 77
@@ -222,6 +247,9 @@ actions:
       tts_media_player_in: !input tts_media_player
       tts_language_in: !input tts_language
       tts_volume_in: !input tts_volume
+      tts_message_open: !input tts_message_open
+      tts_message_close_cold: !input tts_message_close_cold
+      tts_message_close_normal: !input tts_message_close_normal
 
   - choose:
       - conditions:
@@ -288,9 +316,7 @@ actions:
         sequence:
           - action: !input tts_script
             data:
-              message: >-
-                Hohe Luftfeuchtigkeit ({{ rh_inside | round(0) }}%). Bitte
-                lüften.
+              message: !input tts_message_open
               media_player: "{{ tts_media_player_in }}"
               language: "{{ tts_language_in }}"
               volume: "{{ tts_volume_in }}"
@@ -322,11 +348,11 @@ actions:
         sequence:
           - action: !input tts_script
             data:
-              message: |
+              message: >-
                 {% if temp_inside < min_temp %}
-                  Achtung, Kälteschutz! Fenster schließen.
+                  {{ tts_message_close_cold }}
                 {% else %}
-                  Luftwerte normalisiert. Fenster kann zu.
+                  {{ tts_message_close_normal }}
                 {% endif %}
               media_player: "{{ tts_media_player_in }}"
               language: "{{ tts_language_in }}"
