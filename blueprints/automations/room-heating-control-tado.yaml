@@ -82,7 +82,7 @@ blueprint:
           mode: slider
 
     nightly_reset_time:
-      name: Nightly reset time (24h format)
+      name: Nightly reset time
       description: Time to clear overrides and re-apply correct mode.
       default: "02:00:00"
       selector:
