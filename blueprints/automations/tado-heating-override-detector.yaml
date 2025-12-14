@@ -7,12 +7,12 @@ blueprint:
   domain: automation
 
   input:
-    climates:
-      name: Tado climate entities
-      description: Select all Tado climate entities to monitor.
+    overlay_sensors:
+      name: Tado overlay binary sensors
+      description: Select all binary_sensor.*_overlay entities.
       selector:
         entity:
-          domain: climate
+          domain: binary_sensor
           multiple: true
 
     debug_mode:
@@ -23,128 +23,103 @@ blueprint:
         boolean: {}
 
 variables:
-  climates_list: !input climates
   debug_enabled: !input debug_mode
 
 trigger:
-  # Trigger on ANY overlay sensor state change
-  # Derived from the selected climate entities
-  - trigger: template
-    value_template: >
-      {% set ns = namespace(changed=false) %}
-      {% for cl in climates_list %}
-        {% set oid = cl.split('.')[1] %}
-        {% set overlay = 'binary_sensor.' ~ oid ~ '_overlay' %}
-        {% if is_state_attr(overlay, 'last_changed', now()) %}
-          {% set ns.changed = true %}
-        {% endif %}
-      {% endfor %}
-      {{ ns.changed }}
+  - trigger: state
+    entity_id: !input overlay_sensors
 
 conditions:
   - condition: template
-    value_template: "{{ trigger is defined }}"
+    value_template: >
+      {{ trigger is defined 
+         and trigger.entity_id is not none 
+         and trigger.entity_id != '' }}
 
 action:
-  # Find which overlay changed by checking all of them
   - variables:
-      changed_overlays: >
-        {% set result = namespace(sensors=[]) %}
-        {% for cl in climates_list %}
-          {% set oid = cl.split('.')[1] %}
-          {% set overlay = 'binary_sensor.' ~ oid ~ '_overlay' %}
-          {% if (now() - states[overlay].last_changed).total_seconds() < 2 %}
-            {% set result.sensors = result.sensors + [{'climate': cl, 'overlay': overlay, 'object_id': oid}] %}
-          {% endif %}
-        {% endfor %}
-        {{ result.sensors }}
+      overlay_sensor: "{{ trigger.entity_id }}"
+      object_id: "{{ overlay_sensor.split('.')[1].replace('_overlay', '') }}"
+      triggered_climate: "{{ 'climate.' ~ object_id }}"
+      override_bool: "{{ 'input_boolean.climate_' ~ object_id ~ '_override' }}"
+      override_temp: "{{ 'input_number.climate_' ~ object_id ~ '_override_temp' }}"
 
-  - repeat:
-      for_each: "{{ changed_overlays }}"
-      sequence:
-        - variables:
-            triggered_climate: "{{ repeat.item.climate }}"
-            overlay_sensor: "{{ repeat.item.overlay }}"
-            object_id: "{{ repeat.item.object_id }}"
-            override_bool: "{{ 'input_boolean.climate_' ~ object_id ~ '_override' }}"
-            override_temp: "{{ 'input_number.climate_' ~ object_id ~ '_override_temp' }}"
+      overlay_state: "{{ trigger.to_state.state | lower }}"
+      hvac_mode: "{{ states(triggered_climate) }}"
+      current_temp: "{{ state_attr(triggered_climate, 'temperature') | float(-1) }}"
 
-            overlay_state: "{{ states(overlay_sensor) | lower }}"
-            hvac_mode: "{{ states(triggered_climate) }}"
-            current_temp: "{{ state_attr(triggered_climate, 'temperature') | float(-1) }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ debug_enabled }}"
+        sequence:
+          - action: logbook.log
+            data:
+              name: "Tado Override Detector"
+              entity_id: "{{ this.entity_id }}"
+              message: >
+                Triggered by {{ overlay_sensor }}. State: {{ overlay_state }}.
+                Climate: {{ triggered_climate }} (mode: {{ hvac_mode }}, temp: {{ current_temp }}°C).
+                Helpers: {{ override_bool }}, {{ override_temp }}.
 
-        - choose:
-            - conditions:
-                - condition: template
-                  value_template: "{{ debug_enabled }}"
-              sequence:
-                - action: logbook.log
-                  data:
-                    name: "Tado Override Detector"
-                    entity_id: "{{ this.entity_id }}"
-                    message: >
-                      Triggered by {{ overlay_sensor }}. State: {{ overlay_state }}.
-                      Climate: {{ triggered_climate }} (mode: {{ hvac_mode }}, temp: {{ current_temp }}°C).
-                      Helpers: {{ override_bool }}, {{ override_temp }}.
+  - choose:
+      # Overlay On + climate not off → store override
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ overlay_state == 'on'
+                 and hvac_mode not in ['off','unavailable','unknown'] }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ debug_enabled }}"
+                sequence:
+                  - action: logbook.log
+                    data:
+                      name: "Tado Override Detector"
+                      entity_id: "{{ this.entity_id }}"
+                      message: >
+                        Manual override detected → storing {{ current_temp }}°C
+                        in {{ override_temp }}, turning ON {{ override_bool }}
 
-        - choose:
-            # Overlay On + climate not off → store override
-            - conditions:
-                - condition: template
-                  value_template: >
-                    {{ overlay_state == 'on'
-                       and hvac_mode not in ['off','unavailable','unknown'] }}
-              sequence:
-                - choose:
-                    - conditions:
-                        - condition: template
-                          value_template: "{{ debug_enabled }}"
-                      sequence:
-                        - action: logbook.log
-                          data:
-                            name: "Tado Override Detector"
-                            entity_id: "{{ this.entity_id }}"
-                            message: >
-                              Manual override detected → storing {{ current_temp }}°C
-                              in {{ override_temp }}, turning ON {{ override_bool }}
+          - action: input_boolean.turn_on
+            target:
+              entity_id: "{{ override_bool }}"
 
-                - action: input_boolean.turn_on
-                  target:
-                    entity_id: "{{ override_bool }}"
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ override_temp }}"
+            data:
+              value: "{{ current_temp }}"
 
-                - action: input_number.set_value
-                  target:
-                    entity_id: "{{ override_temp }}"
-                  data:
-                    value: "{{ current_temp }}"
+      # Overlay Off or climate off → clear override
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ overlay_state == 'off' or hvac_mode == 'off' }}
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ debug_enabled }}"
+                sequence:
+                  - action: logbook.log
+                    data:
+                      name: "Tado Override Detector"
+                      entity_id: "{{ this.entity_id }}"
+                      message: >
+                        Schedule active/off → clearing {{ override_temp }} to -1,
+                        turning OFF {{ override_bool }}
 
-            # Overlay Off or climate off → clear override
-            - conditions:
-                - condition: template
-                  value_template: >
-                    {{ overlay_state == 'off' or hvac_mode == 'off' }}
-              sequence:
-                - choose:
-                    - conditions:
-                        - condition: template
-                          value_template: "{{ debug_enabled }}"
-                      sequence:
-                        - action: logbook.log
-                          data:
-                            name: "Tado Override Detector"
-                            entity_id: "{{ this.entity_id }}"
-                            message: >
-                              Schedule active/off → clearing {{ override_temp }} to -1,
-                              turning OFF {{ override_bool }}
+          - action: input_boolean.turn_off
+            target:
+              entity_id: "{{ override_bool }}"
 
-                - action: input_boolean.turn_off
-                  target:
-                    entity_id: "{{ override_bool }}"
-
-                - action: input_number.set_value
-                  target:
-                    entity_id: "{{ override_temp }}"
-                  data:
-                    value: -1
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ override_temp }}"
+            data:
+              value: -1
 
 mode: restart
