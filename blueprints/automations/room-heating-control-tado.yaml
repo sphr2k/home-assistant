@@ -165,17 +165,17 @@ action:
           - condition: template
             value_template: "{{ debug_enabled }}"
         sequence:
-          - action: script.debug_log
+          - action: logbook.log
             data:
-              source_entity_id: "{{ this.entity_id }}"
-              source_name: "{{ this.attributes.friendly_name }}"
-              trigger: "{{ trigger.id }}"
-              state:
-                win: "{{ 'open' if any_window_open else 'closed' }}"
-                overlay: "{{ overlay_state }}"
-                override: "{{ override_temp }}°C"
-                hvac: "{{ hvac_mode }}"
-                out: "{{ outside_temp }}°C"
+              name: "{{ this.attributes.friendly_name }}"
+              entity_id: "{{ this.entity_id }}"
+              message: >
+                [{{ trigger.id }}]
+                window: {{ 'open' if any_window_open else 'closed' }} |
+                overlay: {{ overlay_state }} |
+                override: {{ override_temp }}°C |
+                hvac: {{ hvac_mode }} |
+                out: {{ outside_temp }}°C
 
   - choose:
       # HANDLE OVERLAY CHANGE: detect manual override
@@ -196,12 +196,11 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: script.debug_log
+                          - action: logbook.log
                             data:
-                              source_entity_id: "{{ this.entity_id }}"
-                              source_name: "{{ this.attributes.friendly_name }}"
-                              decision: "Manual override stored"
-                              details: "{{ current_temp }}°C"
+                              name: "{{ this.attributes.friendly_name }}"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Manual override stored ({{ current_temp }}°C)"
 
                   - action: input_number.set_value
                     target:
@@ -219,12 +218,11 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: script.debug_log
+                          - action: logbook.log
                             data:
-                              source_entity_id: "{{ this.entity_id }}"
-                              source_name: "{{ this.attributes.friendly_name }}"
-                              decision: "Override cleared"
-                              details: "back to schedule"
+                              name: "{{ this.attributes.friendly_name }}"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Override cleared → back to schedule"
 
                   - action: input_number.set_value
                     target:
@@ -263,12 +261,11 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: script.debug_log
+                          - action: logbook.log
                             data:
-                              source_entity_id: "{{ this.entity_id }}"
-                              source_name: "{{ this.attributes.friendly_name }}"
-                              decision: "Climate off"
-                              details: "window open"
+                              name: "{{ this.attributes.friendly_name }}"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Climate off → window open"
 
                   - action: climate.turn_off
                     target:
@@ -290,12 +287,11 @@ action:
                                   - condition: template
                                     value_template: "{{ debug_enabled }}"
                                 sequence:
-                                  - action: script.debug_log
+                                  - action: logbook.log
                                     data:
-                                      source_entity_id: "{{ this.entity_id }}"
-                                      source_name: "{{ this.attributes.friendly_name }}"
-                                      decision: "Restored manual override"
-                                      details: "{{ override_temp }}°C"
+                                      name: "{{ this.attributes.friendly_name }}"
+                                      entity_id: "{{ this.entity_id }}"
+                                      message: "Restored manual override ({{ override_temp }}°C)"
 
                           - action: climate.set_temperature
                             target:
@@ -324,12 +320,11 @@ action:
                                   - condition: template
                                     value_template: "{{ debug_enabled }}"
                                 sequence:
-                                  - action: script.debug_log
+                                  - action: logbook.log
                                     data:
-                                      source_entity_id: "{{ this.entity_id }}"
-                                      source_name: "{{ this.attributes.friendly_name }}"
-                                      decision: "Restored auto mode"
-                                      details: "{{ target_mode }}"
+                                      name: "{{ this.attributes.friendly_name }}"
+                                      entity_id: "{{ this.entity_id }}"
+                                      message: "Restored auto mode → {{ target_mode }}"
 
                           - action: climate.set_hvac_mode
                             target:
@@ -357,12 +352,11 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: script.debug_log
+                          - action: logbook.log
                             data:
-                              source_entity_id: "{{ this.entity_id }}"
-                              source_name: "{{ this.attributes.friendly_name }}"
-                              decision: "Nightly reset"
-                              details: "cleared override"
+                              name: "{{ this.attributes.friendly_name }}"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Nightly reset → cleared override"
 
                   - action: input_number.set_value
                     target:
@@ -389,12 +383,11 @@ action:
                   - condition: template
                     value_template: "{{ debug_enabled }}"
                 sequence:
-                  - action: script.debug_log
+                  - action: logbook.log
                     data:
-                      source_entity_id: "{{ this.entity_id }}"
-                      source_name: "{{ this.attributes.friendly_name }}"
-                      decision: "Enforcing mode"
-                      details: "{{ target_mode }}"
+                      name: "{{ this.attributes.friendly_name }}"
+                      entity_id: "{{ this.entity_id }}"
+                      message: "Enforcing mode → {{ target_mode }}"
 
           - action: climate.set_hvac_mode
             target:
