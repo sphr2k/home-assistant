@@ -52,7 +52,6 @@ blueprint:
     tts_script:
       name: TTS helper script
       description: Script created from the TTS Speak Helper blueprint
-      default: script.tts_speak
       selector:
         entity:
           domain: script
