@@ -232,24 +232,43 @@ actions:
             data:
               name: Bad Lüftung DEBUG
               entity_id: "{{ this.entity_id }}"
+
               message: >
-                [Decision Tree] Last Run: {{ mins_since_last_run | round(1) }}m
-                ago. In: {{ abs_inside }}g ({{ rh_inside }}%) | Out: {{
-                abs_outside }}g Window: {{ window_state }} ({{ time_open_mins }}m)
+                Decision: {{ outcome }}
+                Reason: {{ outcome_reason }}
 
-                [Open Checks] 1. Sensors OK? -> {{ sensors_ok }}
-                2. Shower Zone ({{ thresh_rh_open }}% / {{ thresh_abs_open }}g)?
-                   -> {{ is_shower_zone }}
-                3. Physics Delta (>{{ min_delta }}g)? -> {{ is_physics_good }}
-                   ({{ delta }}g)
-                4. Temp Safe (>{{ min_temp }}°C)? -> {{ is_temp_safe }}
-                5. Not Nagging (>10m)? -> {{ mins_since_last_run >= 10 }}
+                Current situation
+                - Window state: {{ 'OPEN' if window_state == 'on' else 'CLOSED' }} (open for {{ time_open_mins | round(1) }} minutes)
+                - Inside air: {{ rh_inside | round(1) }}% relative humidity, {{ abs_inside | round(2) }} g/m³ absolute humidity, {{ temp_inside | round(1) }} °C
+                - Outside air: {{ abs_outside | round(2) }} g/m³ absolute humidity
+                - Difference (inside - outside): {{ delta | round(2) }} g/m³
 
-                [Close Checks] 1. Min Open Time ({{ min_open_time }}m)?
-                   -> {{ time_open_mins >= min_open_time }}
-                2. Back to Normal (<{{ thresh_rh_close }}%)?
-                   -> {{ rh_inside <= thresh_rh_close }}
-                3. Not Nagging (>5m)? -> {{ mins_since_last_run >= 5 }}
+                Anti-nag timing
+                - Minutes since last spoken hint: {{ mins_since_last_hint | round(1) }} minutes
+                - Required spacing: open-hint ≥ {{ nag_open_mins }} min, close-hint ≥ {{ nag_close_mins }} min
+
+                OPEN hint evaluation (when the window is closed)
+                - Sensors available: {{ sensors_ok }}
+                - Window is closed: {{ window_state == 'off' }}
+                - Humidity is in “shower zone”
+                  (relative humidity > {{ thresh_rh_open }}% OR absolute humidity > {{ thresh_abs_open }} g/m³): {{ is_shower_zone }}
+                - Outside air is dry enough
+                  (difference ≥ {{ min_delta }} g/m³): {{ is_physics_good }}
+                - Indoor temperature is safe to ventilate (> {{ min_temp }} °C): {{ is_temp_safe }}
+                - Anti-nag passed for open hints (≥ {{ nag_open_mins }} min): {{ mins_since_last_hint >= nag_open_mins }}
+
+                CLOSE hint evaluation (when the window is open)
+                - Sensors available: {{ sensors_ok }}
+                - Window is open: {{ window_state == 'on' }}
+                - Anti-nag passed for close hints (≥ {{ nag_close_mins }} min): {{ mins_since_last_hint >= nag_close_mins }}
+                - Too cold protection active (temperature < {{ min_temp }} °C): {{ temp_inside < min_temp }}
+                - Window has been open long enough (≥ {{ min_open_time }} min): {{ time_open_mins >= min_open_time }}
+                - Humidity back to normal (relative humidity ≤ {{ thresh_rh_close }}%): {{ rh_inside <= thresh_rh_close }}
+                - Humidity back to normal (absolute humidity ≤ {{ thresh_abs_close }} g/m³): {{ abs_inside <= thresh_abs_close }}
+                - Difference is small (difference < 0.5 g/m³): {{ delta < 0.5 }}
+
+                Note
+                - A CLOSE hint is allowed if anti-nag passed AND (too cold OR (open long enough AND any “back to normal” condition is true)).
 
   - choose:
       # OPEN HINT (window closed, should open)
