@@ -346,10 +346,56 @@ action:
                     data:
                       value: -1
 
-          # Apply correct mode if windows closed and no override
+          # Apply correct mode based on current conditions
+          - choose:
+              # Window is open → turn off (regardless of override status now)
+              - conditions:
+                  - condition: template
+                    value_template: "{{ any_window_open and hvac_mode != 'off' }}"
+                sequence:
+                  - action: climate.turn_off
+                    target:
+                      entity_id: !input room_climate
+
+              # Windows closed, no override → apply global mode
+              - conditions:
+                  - condition: template
+                    value_template: "{{ all_windows_closed and override_temp <= 0 }}"
+                sequence:
+                  - variables:
+                      target_mode: >
+                        {% if in_no_heat_season %}
+                          off
+                        {% elif outside_temp < comfort_threshold %}
+                          auto
+                        {% else %}
+                          off
+                        {% endif %}
+
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled and hvac_mode != target_mode }}"
+                        sequence:
+                          - action: logbook.log
+                            data:
+                              name: "{{ this.attributes.friendly_name }}"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Nightly reset → mode set to {{ target_mode }}"
+
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input room_climate
+                    data:
+                      hvac_mode: "{{ target_mode }}"
+
+      # HANDLE OUTSIDE TEMP CHANGE (non-nightly)
+      - conditions:
+          - condition: trigger
+            id: outside_temp_change
           - condition: template
             value_template: "{{ all_windows_closed and override_temp <= 0 }}"
-
+        sequence:
           - variables:
               target_mode: >
                 {% if in_no_heat_season %}
@@ -363,19 +409,24 @@ action:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ debug_enabled and hvac_mode != target_mode }}"
+                    value_template: "{{ hvac_mode != target_mode }}"
                 sequence:
-                  - action: logbook.log
-                    data:
-                      name: "{{ this.attributes.friendly_name }}"
-                      entity_id: "{{ this.entity_id }}"
-                      message: "Mode enforced ({{ hvac_mode }} → {{ target_mode }})"
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled }}"
+                        sequence:
+                          - action: logbook.log
+                            data:
+                              name: "{{ this.attributes.friendly_name }}"
+                              entity_id: "{{ this.entity_id }}"
+                              message: "Outside temp changed → mode {{ hvac_mode }} → {{ target_mode }}"
 
-          - action: climate.set_hvac_mode
-            target:
-              entity_id: !input room_climate
-            data:
-              hvac_mode: "{{ target_mode }}"
+                  - action: climate.set_hvac_mode
+                    target:
+                      entity_id: !input room_climate
+                    data:
+                      hvac_mode: "{{ target_mode }}"
 
       # SAFETY TICK: enforce correct state (silent unless mode actually changes)
       - conditions:
