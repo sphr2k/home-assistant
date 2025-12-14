@@ -159,23 +159,21 @@ trigger:
     seconds: "30"
 
 action:
-  # Debug log
+  # Initial state log
   - choose:
       - conditions:
           - condition: template
             value_template: "{{ debug_enabled }}"
         sequence:
-          - action: logbook.log
+          - action: script.debug_log
             data:
-              name: "Room Heating Control"
-              entity_id: "{{ this.entity_id }}"
-              message: >
-                Trigger: {{ trigger.id }}.
-                Windows: {{ 'open' if any_window_open else 'closed' }}.
-                Overlay: {{ overlay_state }}.
-                Override temp: {{ override_temp }}°C.
-                HVAC: {{ hvac_mode }}, current temp: {{ current_temp }}°C.
-                Outside: {{ outside_temp }}°C, no-heat season: {{ in_no_heat_season }}.
+              trigger: "{{ trigger.id }}"
+              state:
+                win: "{{ 'open' if any_window_open else 'closed' }}"
+                overlay: "{{ overlay_state }}"
+                override: "{{ override_temp }}°C"
+                hvac: "{{ hvac_mode }}"
+                out: "{{ outside_temp }}°C"
 
   - choose:
       # HANDLE OVERLAY CHANGE: detect manual override
@@ -196,11 +194,10 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: logbook.log
+                          - action: script.debug_log
                             data:
-                              name: "Room Heating Control"
-                              entity_id: "{{ this.entity_id }}"
-                              message: "Manual override detected → storing {{ current_temp }}°C"
+                              decision: "Manual override stored"
+                              details: "{{ current_temp }}°C"
 
                   - action: input_number.set_value
                     target:
@@ -218,11 +215,10 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: logbook.log
+                          - action: script.debug_log
                             data:
-                              name: "Room Heating Control"
-                              entity_id: "{{ this.entity_id }}"
-                              message: "Schedule active → clearing override to -1"
+                              decision: "Override cleared"
+                              details: "back to schedule"
 
                   - action: input_number.set_value
                     target:
@@ -261,11 +257,10 @@ action:
                           - condition: template
                             value_template: "{{ debug_enabled }}"
                         sequence:
-                          - action: logbook.log
+                          - action: script.debug_log
                             data:
-                              name: "Room Heating Control"
-                              entity_id: "{{ this.entity_id }}"
-                              message: "Window open → turning off climate"
+                              decision: "Climate off"
+                              details: "window open"
 
                   - action: climate.turn_off
                     target:
@@ -277,24 +272,21 @@ action:
                     value_template: "{{ all_windows_closed }}"
                 sequence:
                   - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ debug_enabled }}"
-                        sequence:
-                          - action: logbook.log
-                            data:
-                              name: "Room Heating Control"
-                              entity_id: "{{ this.entity_id }}"
-                              message: >
-                                Windows closed. Override temp: {{ override_temp }}°C.
-                                Will restore {{ 'manual mode' if override_temp > 0 else 'auto' }}.
-
-                  - choose:
                       # Restore manual override temp
                       - conditions:
                           - condition: template
                             value_template: "{{ override_temp > 0 }}"
                         sequence:
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ debug_enabled }}"
+                                sequence:
+                                  - action: script.debug_log
+                                    data:
+                                      decision: "Restored manual override"
+                                      details: "{{ override_temp }}°C"
+
                           - action: climate.set_temperature
                             target:
                               entity_id: !input room_climate
@@ -317,6 +309,16 @@ action:
                                   off
                                 {% endif %}
 
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ debug_enabled }}"
+                                sequence:
+                                  - action: script.debug_log
+                                    data:
+                                      decision: "Restored auto mode"
+                                      details: "{{ target_mode }}"
+
                           - action: climate.set_hvac_mode
                             target:
                               entity_id: !input room_climate
@@ -338,6 +340,16 @@ action:
                   - condition: trigger
                     id: nightly_reset
                 sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ debug_enabled }}"
+                        sequence:
+                          - action: script.debug_log
+                            data:
+                              decision: "Nightly reset"
+                              details: "cleared override"
+
                   - action: input_number.set_value
                     target:
                       entity_id: "{{ override_temp_helper_entity }}"
@@ -363,11 +375,10 @@ action:
                   - condition: template
                     value_template: "{{ debug_enabled }}"
                 sequence:
-                  - action: logbook.log
+                  - action: script.debug_log
                     data:
-                      name: "Room Heating Control"
-                      entity_id: "{{ this.entity_id }}"
-                      message: "Enforcing mode: {{ target_mode }}"
+                      decision: "Enforcing mode"
+                      details: "{{ target_mode }}"
 
           - action: climate.set_hvac_mode
             target:
