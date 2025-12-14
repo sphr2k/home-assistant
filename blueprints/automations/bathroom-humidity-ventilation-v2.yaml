@@ -208,17 +208,15 @@ actions:
 
       time_open_mins: >-
         {% if window_last_changed %}
-          {{ ((as_timestamp(now()) - as_timestamp(window_last_changed)) / 60)
-             | round(1) | float(0) }}
+          {{ (((as_timestamp(now()) - as_timestamp(window_last_changed)) / 60)) | float(0) }}
         {% else %}
           0
         {% endif %}
 
       mins_since_last_run: >-
-        {{ (as_timestamp(now())
-            - as_timestamp(this.attributes.last_triggered
-                           | default('2000-01-01', true)))
-           / 60 | float(0) }}
+        {{ ((as_timestamp(now())
+            - as_timestamp(this.attributes.last_triggered | default('2000-01-01', true)))
+            / 60) | float(0) }}
 
       thresh_rh_open: !input thresh_rh_open
       thresh_abs_open: !input thresh_abs_open
