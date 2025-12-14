@@ -1,5 +1,5 @@
 blueprint:
-  name: Room heating control (all-in-one)
+  name: Room heating control (v1.2)
   description: >
     Per-room heating control with window detection, manual override preservation
     based on Tado overlay sensors, seasonal on/off, and nightly reset.
