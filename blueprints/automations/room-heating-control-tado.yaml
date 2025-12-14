@@ -1,6 +1,10 @@
+# Room Heating Control
+# Per-room heating control with window detection, manual override preservation
+# based on Tado overlay sensors, seasonal on/off, and nightly reset.
+
 blueprint:
-  name: Room heating control (v1.2)
-  description: >
+  name: Room Heating Control
+  description: Room Heating Control v1.3
     Per-room heating control with window detection, manual override preservation
     based on Tado overlay sensors, seasonal on/off, and nightly reset.
   domain: automation
