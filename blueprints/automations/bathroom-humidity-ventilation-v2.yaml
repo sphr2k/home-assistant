@@ -1,5 +1,5 @@
 blueprint:
-  name: Bathroom Humidity Ventilation v2.4
+  name: Bathroom Humidity Ventilation v2.5
   description: >
     Data-driven ventilation advice with volume control, configurable logging levels
     (NONE/DEBUG/TRACE), and nag limits, based on absolute humidity and temperature.
@@ -344,8 +344,7 @@ actions:
         abs_in={{ abs_inside | round(1) }},
         abs_out={{ abs_outside | round(1) }},
         delta={{ delta | round(1) }},
-        temp={{ temp_inside | round(1) }},
-        humidity={{ humidity_status }}
+        temp={{ temp_inside | round(1) }}
 
   - choose:
       - conditions:
@@ -357,7 +356,7 @@ actions:
               name: "{{ this.attributes.friendly_name }}"
               entity_id: "{{ this.entity_id }}"
               message: >
-                {{ outcome }} — {{ outcome_reason }} | Humidity: {{ humidity_status }} | {{ snapshot }}
+                {{ outcome }} ({{ outcome_reason }}) | {{ humidity_status }} | {{ snapshot }}
 
   - choose:
       # OPEN HINT (window closed, should open)
