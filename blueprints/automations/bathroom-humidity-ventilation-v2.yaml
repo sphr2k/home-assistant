@@ -1,5 +1,5 @@
 blueprint:
-  name: Bathroom Humidity Ventilation v2.3
+  name: Bathroom Humidity Ventilation v2.4
   description: >
     Data-driven ventilation advice with volume control, configurable logging levels
     (NONE/DEBUG/TRACE), and nag limits, based on absolute humidity and temperature.
@@ -289,6 +289,44 @@ actions:
           No action
         {% endif %}
 
+      # Determine humidity status with reason (OK or NOT OK) regardless of action taken
+      humidity_status: >-
+        {% if not sensors_ok %}
+          UNKNOWN (sensors unavailable)
+        {% elif window_state == 'off' and is_shower_zone %}
+          {% if rh_inside > thresh_rh_open %}
+            High: {{ rh_inside | round(0) }}% > {{ thresh_rh_open }}% threshold
+          {% elif abs_inside > thresh_abs_open %}
+            High: {{ abs_inside | round(1) }} g/m³ > {{ thresh_abs_open }} threshold
+          {% else %}
+            High: in shower zone
+          {% endif %}
+        {% elif window_state == 'on' and (rh_inside <= thresh_rh_close or abs_inside <= thresh_abs_close or delta < 0.5) %}
+          {% if rh_inside <= thresh_rh_close %}
+            Normalized: {{ rh_inside | round(0) }}% ≤ {{ thresh_rh_close }}% threshold
+          {% elif abs_inside <= thresh_abs_close %}
+            Normalized: {{ abs_inside | round(1) }} g/m³ ≤ {{ thresh_abs_close }} threshold
+          {% elif delta < 0.5 %}
+            Normalized: delta {{ delta | round(1) }} < 0.5 g/m³
+          {% else %}
+            Normalized
+          {% endif %}
+        {% elif window_state == 'off' and not is_shower_zone %}
+          OK: {{ rh_inside | round(0) }}% ≤ {{ thresh_rh_open }}% and {{ abs_inside | round(1) }} ≤ {{ thresh_abs_open }} g/m³
+        {% elif window_state == 'on' and not (rh_inside <= thresh_rh_close or abs_inside <= thresh_abs_close or delta < 0.5) %}
+          {% if rh_inside > thresh_rh_close %}
+            Still high: {{ rh_inside | round(0) }}% > {{ thresh_rh_close }}% threshold
+          {% elif abs_inside > thresh_abs_close %}
+            Still high: {{ abs_inside | round(1) }} g/m³ > {{ thresh_abs_close }} threshold
+          {% elif delta >= 0.5 %}
+            Still high: delta {{ delta | round(1) }} ≥ 0.5 g/m³
+          {% else %}
+            Still high
+          {% endif %}
+        {% else %}
+          UNKNOWN
+        {% endif %}
+
       # Logging levels: NONE = no logs, DEBUG = actionable only, TRACE = all including NOOP
       log_debug: >-
         {% if log_level == 'TRACE' %}
@@ -306,7 +344,8 @@ actions:
         abs_in={{ abs_inside | round(1) }},
         abs_out={{ abs_outside | round(1) }},
         delta={{ delta | round(1) }},
-        temp={{ temp_inside | round(1) }}
+        temp={{ temp_inside | round(1) }},
+        humidity={{ humidity_status }}
 
   - choose:
       - conditions:
@@ -318,7 +357,7 @@ actions:
               name: "{{ this.attributes.friendly_name }}"
               entity_id: "{{ this.entity_id }}"
               message: >
-                {{ outcome }} — {{ outcome_reason }} | {{ snapshot }}
+                {{ outcome }} — {{ outcome_reason }} | Humidity: {{ humidity_status }} | {{ snapshot }}
 
   - choose:
       # OPEN HINT (window closed, should open)
