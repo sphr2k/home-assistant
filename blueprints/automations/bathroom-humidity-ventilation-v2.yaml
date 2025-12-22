@@ -1,8 +1,8 @@
 blueprint:
-  name: Bathroom Humidity Ventilation v2.2
+  name: Bathroom Humidity Ventilation v2.3
   description: >
-    Data-driven ventilation advice with volume control, debug logging,
-    and nag limits, based on absolute humidity and temperature.
+    Data-driven ventilation advice with volume control, configurable logging levels
+    (NONE/DEBUG/TRACE), and nag limits, based on absolute humidity and temperature.
   domain: automation
 
   input:
@@ -167,11 +167,16 @@ blueprint:
           max: 120
           step: 1
 
-    debug_mode:
-      name: Enable debug log entries
-      default: true
+    log_level:
+      name: Logging level
+      description: NONE = no logs, DEBUG = actionable outcomes only, TRACE = all outcomes including NOOP
+      default: DEBUG
       selector:
-        boolean: {}
+        select:
+          options:
+            - NONE
+            - DEBUG
+            - TRACE
 
 triggers:
   - trigger: state
@@ -191,7 +196,7 @@ conditions:
 
 actions:
   - variables:
-      debug_mode: !input debug_mode
+      log_level: !input log_level
 
       abs_inside_entity: !input sensor_abs_inside
       abs_outside_entity: !input sensor_abs_outside
@@ -284,8 +289,15 @@ actions:
           No action
         {% endif %}
 
-      # Only log when something actionable happens
-      log_debug: "{{ debug_mode and outcome != 'NOOP' }}"
+      # Logging levels: NONE = no logs, DEBUG = actionable only, TRACE = all including NOOP
+      log_debug: >-
+        {% if log_level == 'TRACE' %}
+          true
+        {% elif log_level == 'DEBUG' and outcome != 'NOOP' %}
+          true
+        {% else %}
+          false
+        {% endif %}
 
       snapshot: >-
         window={{ 'open' if window_state == 'on' else 'closed' }},
