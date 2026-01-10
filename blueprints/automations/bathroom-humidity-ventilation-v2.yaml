@@ -1,8 +1,10 @@
 blueprint:
-  name: Bathroom Humidity Ventilation v2.5
+  name: Bathroom Humidity Ventilation v2.6
   description: >
     Data-driven ventilation advice with volume control, configurable logging levels
     (NONE/DEBUG/TRACE), and nag limits, based on absolute humidity and temperature.
+    Uses an input_datetime helper to rate-limit announcements based on the last
+    *spoken* message (not last automation trigger).
   domain: automation
 
   input:
@@ -47,6 +49,25 @@ blueprint:
       selector:
         entity:
           domain: binary_sensor
+
+    # NEW: helper for rate-limiting (stores timestamp of last spoken TTS)
+    last_tts_helper:
+      name: Last spoken timestamp helper
+      description: input_datetime helper that stores when the last announcement was spoken.
+      selector:
+        entity:
+          domain: input_datetime
+
+    announce_interval_mins:
+      name: Minimum minutes between announcements
+      description: Applies to both OPEN and CLOSE hints (helper-based).
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          step: 1
+          unit_of_measurement: "min"
 
     # TTS helper script + optional overrides
     tts_script:
@@ -185,6 +206,7 @@ triggers:
       - !input sensor_rh_inside
       - !input sensor_abs_outside
       - !input sensor_temp_inside
+      - !input window_contact
 
 conditions:
   - condition: state
@@ -204,6 +226,10 @@ actions:
       temp_inside_entity: !input sensor_temp_inside
       window_entity: !input window_contact
 
+      # NEW: helper + interval
+      last_tts_entity: !input last_tts_helper
+      announce_interval_mins: !input announce_interval_mins
+
       abs_inside: "{{ states(abs_inside_entity) | float(0) }}"
       abs_outside: "{{ states(abs_outside_entity) | float(0) }}"
       rh_inside: "{{ states(rh_inside_entity) | float(0) }}"
@@ -218,10 +244,21 @@ actions:
           0
         {% endif %}
 
-      mins_since_last_run: >-
-        {{ ((as_timestamp(now())
-            - as_timestamp(this.attributes.last_triggered | default('2000-01-01', true)))
-            / 60) | float(0) }}
+      # NEW: mins since last *spoken* message (helper-based)
+      last_tts_ts: >-
+        {% set s = states(last_tts_entity) %}
+        {% if s in ['unknown','unavailable','none',''] %}
+          0
+        {% else %}
+          {{ as_timestamp(s) | float(0) }}
+        {% endif %}
+
+      mins_since_last_announce: >-
+        {% if last_tts_ts == 0 %}
+          999999
+        {% else %}
+          {{ ((as_timestamp(now()) - last_tts_ts) / 60) | float(0) }}
+        {% endif %}
 
       thresh_rh_open: !input thresh_rh_open
       thresh_abs_open: !input thresh_abs_open
@@ -239,6 +276,7 @@ actions:
           and states(abs_outside_entity) not in ['unknown','unavailable']
           and states(rh_inside_entity) not in ['unknown','unavailable']
           and states(temp_inside_entity) not in ['unknown','unavailable']
+          and window_state not in ['unknown','unavailable']
         }}
 
       is_shower_zone: "{{ rh_inside > thresh_rh_open or abs_inside > thresh_abs_open }}"
@@ -262,10 +300,10 @@ actions:
               and is_shower_zone
               and is_physics_good
               and is_temp_safe
-              and mins_since_last_run >= 10 %}
+              and mins_since_last_announce >= announce_interval_mins %}
           OPEN_HINT
         {% elif window_state == 'on'
-              and mins_since_last_run >= 5
+              and mins_since_last_announce >= announce_interval_mins
               and (temp_inside < min_temp
                    or (time_open_mins >= min_open_time
                        and (rh_inside <= thresh_rh_close
@@ -344,7 +382,8 @@ actions:
         abs_in={{ abs_inside | round(1) }},
         abs_out={{ abs_outside | round(1) }},
         delta={{ delta | round(1) }},
-        temp={{ temp_inside | round(1) }}
+        temp={{ temp_inside | round(1) }},
+        mins_since_announce={{ mins_since_last_announce | round(1) }}
 
   - choose:
       - conditions:
@@ -372,7 +411,7 @@ actions:
           - condition: template
             value_template: "{{ is_temp_safe }}"
           - condition: template
-            value_template: "{{ mins_since_last_run >= 10 }}"
+            value_template: "{{ mins_since_last_announce >= announce_interval_mins }}"
         sequence:
           - action: !input tts_script
             data:
@@ -381,6 +420,13 @@ actions:
               language: "{{ tts_language_in }}"
               volume: "{{ tts_volume_in }}"
 
+          # NEW: persist "last spoken" time
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input last_tts_helper
+            data:
+              timestamp: "{{ now().timestamp() }}"
+
       # CLOSE HINT (window open, can/should close)
       - conditions:
           - condition: template
@@ -388,7 +434,7 @@ actions:
           - condition: template
             value_template: "{{ window_state == 'on' }}"
           - condition: template
-            value_template: "{{ mins_since_last_run >= 5 }}"
+            value_template: "{{ mins_since_last_announce >= announce_interval_mins }}"
           - condition: or
             conditions:
               - condition: template
@@ -417,5 +463,12 @@ actions:
               media_player: "{{ tts_media_player_in }}"
               language: "{{ tts_language_in }}"
               volume: "{{ tts_volume_in }}"
+
+          # NEW: persist "last spoken" time
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input last_tts_helper
+            data:
+              timestamp: "{{ now().timestamp() }}"
 
 mode: single
